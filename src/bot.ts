@@ -4,6 +4,7 @@ import { ArbitrageDetector } from './strategies/arbitrage-detector';
 import { OrderExecutor } from './trading/order-executor';
 import { RiskManager } from './risk/risk-manager';
 import { LatencyMonitor } from './monitoring/latency-monitor';
+import { MarketScanner } from './polymarket/market-scanner';
 import { BotConfig } from './types';
 import { logger } from './utils/logger';
 
@@ -15,9 +16,11 @@ export class PolymarketHFTBot {
   private orderExecutor: OrderExecutor;
   private riskManager: RiskManager;
   private latencyMonitor: LatencyMonitor;
+  private marketScanner: MarketScanner;
   private isRunning = false;
   private detectionIntervalMs = 100; // Check for opportunities every 100ms
   private detectionTimer?: NodeJS.Timeout;
+  private marketRefreshTimer?: NodeJS.Timeout;
 
   constructor(config: BotConfig) {
     this.config = config;
@@ -51,6 +54,9 @@ export class PolymarketHFTBot {
 
     // Initialize risk manager
     this.riskManager = new RiskManager(config.riskLimits, this.orderExecutor);
+
+    // Initialize market scanner with volume range $10k-$100k
+    this.marketScanner = new MarketScanner(10000, 100000);
 
     this.setupEventHandlers();
   }
@@ -114,19 +120,19 @@ export class PolymarketHFTBot {
 
       // Subscribe to markets
       if (this.config.marketsToMonitor.length > 0) {
+        logger.info('Using manually specified markets');
         for (const marketId of this.config.marketsToMonitor) {
           this.client.subscribeToMarket(marketId);
         }
       } else {
-        logger.warn('No markets specified to monitor. Fetching all active markets...');
-        const markets = await this.client.getMarkets();
-        const activeMarkets = markets.filter(m => m.active && !m.closed).slice(0, 10); // Monitor top 10
+        logger.info('Auto-scanning markets with volume $10k-$100k...');
+        await this.discoverAndSubscribeToMarkets();
 
-        for (const market of activeMarkets) {
-          this.client.subscribeToMarket(market.id);
-        }
-
-        logger.info(`Monitoring ${activeMarkets.length} active markets`);
+        // Refresh market list every 5 minutes
+        this.marketRefreshTimer = setInterval(async () => {
+          logger.info('Refreshing market list...');
+          await this.discoverAndSubscribeToMarkets();
+        }, 5 * 60 * 1000);
       }
 
       // Start periodic opportunity detection
@@ -148,6 +154,42 @@ export class PolymarketHFTBot {
     this.detectionTimer = setInterval(() => {
       this.detectAndExecuteOpportunities();
     }, this.detectionIntervalMs);
+  }
+
+  private async discoverAndSubscribeToMarkets(): Promise<void> {
+    try {
+      const markets = await this.marketScanner.scanAndFilterMarkets();
+
+      if (markets.length === 0) {
+        logger.warn('No markets found matching volume criteria ($10k-$100k)');
+        return;
+      }
+
+      logger.info(`Found ${markets.length} markets to monitor`, {
+        volumeRange: '$10k-$100k',
+        topMarkets: markets.slice(0, 5).map(m => ({
+          question: m.question.substring(0, 50) + '...',
+          volume: `$${Math.round(m.volume).toLocaleString()}`,
+        })),
+      });
+
+      // Subscribe to each market's tokens
+      for (const market of markets) {
+        // Get token IDs for this market
+        const tokens = await this.marketScanner.getMarketTokens(market.id);
+
+        if (tokens.length > 0) {
+          for (const tokenId of tokens) {
+            this.client.subscribeToMarket(tokenId);
+          }
+          logger.debug(`Subscribed to market: ${market.question.substring(0, 50)}...`);
+        }
+      }
+
+      logger.info(`Actively monitoring ${markets.length} markets`);
+    } catch (error) {
+      logger.error('Error discovering markets', { error });
+    }
   }
 
   private detectAndExecuteOpportunities(): void {
@@ -253,6 +295,11 @@ export class PolymarketHFTBot {
     // Stop detection timer
     if (this.detectionTimer) {
       clearInterval(this.detectionTimer);
+    }
+
+    // Stop market refresh timer
+    if (this.marketRefreshTimer) {
+      clearInterval(this.marketRefreshTimer);
     }
 
     // Cancel all active orders

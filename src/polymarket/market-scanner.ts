@@ -4,6 +4,8 @@ import { Market } from '../types';
 export interface MarketWithVolume extends Market {
   volume: number;
   volume24h: number;
+  endDate?: string;
+  spread?: number; // Bid-ask spread for scoring
 }
 
 export class MarketScanner {
@@ -82,6 +84,9 @@ export class MarketScanner {
       logger.info(`Fetched ${allMarkets.length} total markets in ${fetchTime}ms`);
 
       // Filter markets - keep only funded markets with token IDs
+      const now = new Date();
+      const twoWeeksFromNow = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+
       const filteredMarkets = allMarkets
         .filter((market: any) => {
           // Must be active and not closed
@@ -91,6 +96,20 @@ export class MarketScanner {
           // Must have clobTokenIds (funded markets only)
           if (!market.clobTokenIds) {
             return false;
+          }
+          // Must end within 14 days (2 weeks)
+          if (market.endDate || market.end_date) {
+            try {
+              const endDate = new Date(market.endDate || market.end_date);
+              if (endDate > twoWeeksFromNow) {
+                return false; // Market ends too far in the future
+              }
+              if (endDate < now) {
+                return false; // Market already ended
+              }
+            } catch (e) {
+              // Failed to parse date, include the market anyway
+            }
           }
           // Include all active markets regardless of volume
           return true;
@@ -119,10 +138,11 @@ export class MarketScanner {
             outcomes: market.outcomes || ['YES', 'NO'],
             volume: parseFloat(market.volume || market.volume_24h || '0'),
             volume24h: parseFloat(market.volume_24h || market.volume || '0'),
+            endDate: market.endDate || market.end_date,
           };
         });
 
-      logger.info(`Found ${filteredMarkets.length} active, funded markets with token IDs`);
+      logger.info(`Found ${filteredMarkets.length} active, funded markets ending within 14 days`);
 
       // Log sample of markets found
       if (filteredMarkets.length > 0) {
@@ -144,6 +164,64 @@ export class MarketScanner {
     } catch (error) {
       logger.error('Error fetching markets', { error });
       throw error;
+    }
+  }
+
+  async fetchOrderBook(tokenId: string): Promise<{ bestBid: number; bestAsk: number; spread: number } | null> {
+    try {
+      const response = await fetch(`https://clob.polymarket.com/book?token_id=${tokenId}`);
+
+      if (!response.ok) {
+        return null;
+      }
+
+      const data: any = await response.json();
+
+      // Extract best bid and best ask
+      const bids = data.bids || [];
+      const asks = data.asks || [];
+
+      if (bids.length === 0 || asks.length === 0) {
+        return null; // No liquidity
+      }
+
+      const bestBid = parseFloat(bids[0].price);
+      const bestAsk = parseFloat(asks[0].price);
+      const spread = bestAsk - bestBid;
+
+      return { bestBid, bestAsk, spread };
+    } catch (error) {
+      return null;
+    }
+  }
+
+  async getMarketSpread(market: MarketWithVolume): Promise<number> {
+    try {
+      // For markets with token IDs, fetch orderbook and calculate spread
+      if (market.outcomeTokens.length === 0) {
+        return 0;
+      }
+
+      // Fetch orderbooks for all tokens (usually 2 for binary markets)
+      const orderbookPromises = market.outcomeTokens.map(tokenId =>
+        this.fetchOrderBook(tokenId)
+      );
+
+      const orderbooks = await Promise.all(orderbookPromises);
+
+      // Calculate average spread across all tokens
+      const validSpreads = orderbooks
+        .filter(ob => ob !== null)
+        .map(ob => ob!.spread);
+
+      if (validSpreads.length === 0) {
+        return 0; // No valid orderbooks
+      }
+
+      const avgSpread = validSpreads.reduce((sum, s) => sum + s, 0) / validSpreads.length;
+      return avgSpread;
+    } catch (error) {
+      return 0;
     }
   }
 

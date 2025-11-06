@@ -25,7 +25,7 @@ export class PolymarketHFTBot {
   private detectionIntervalMs = 100; // Check for opportunities every 100ms
   private detectionTimer?: NodeJS.Timeout;
   private marketRefreshTimer?: NodeJS.Timeout;
-  private readonly topMarketsCount = 100; // Monitor top 100 markets via WebSocket to avoid rate limits
+  private readonly topMarketsCount = 200; // Monitor top 200 markets via WebSocket
   private readonly marketRefreshIntervalMs = 5 * 60 * 1000; // Refresh every 5 minutes
   private readonly comprehensiveScanIntervalMs = 30 * 1000; // Scan ALL markets every 30 seconds
 
@@ -187,16 +187,43 @@ export class PolymarketHFTBot {
       const liquidMarkets = allMarkets.filter(m => m.volume >= 1000);
       logger.info(`Filtered to ${liquidMarkets.length} markets with volume >= $1k`);
 
-      // Step 2: Score and rank markets by opportunity potential
-      const topMarkets = this.marketScorer.selectTopMarkets(liquidMarkets, this.topMarketsCount);
+      // Step 2: Fetch spreads for all liquid markets (for spread-based scoring)
+      logger.info('Fetching orderbook spreads for liquid markets...');
+      const spreadFetchStart = Date.now();
 
-      logger.info('🎯 WEBSOCKET-ONLY STRATEGY:', {
-        monitoring: `Top ${topMarkets.length} highest-volume markets`,
+      // Fetch spreads in parallel batches to avoid rate limits
+      const batchSize = 10;
+      for (let i = 0; i < liquidMarkets.length; i += batchSize) {
+        const batch = liquidMarkets.slice(i, i + batchSize);
+        const spreadPromises = batch.map(async (market) => {
+          const spread = await this.marketScanner.getMarketSpread(market);
+          market.spread = spread;
+        });
+        await Promise.all(spreadPromises);
+
+        if ((i + batchSize) % 100 === 0) {
+          logger.info(`Fetched spreads for ${Math.min(i + batchSize, liquidMarkets.length)}/${liquidMarkets.length} markets`);
+        }
+      }
+
+      const spreadFetchTime = Date.now() - spreadFetchStart;
+      logger.info(`Fetched spreads for ${liquidMarkets.length} markets in ${spreadFetchTime}ms`);
+
+      // Filter out markets with no spread data (no liquidity)
+      const marketsWithSpreads = liquidMarkets.filter(m => m.spread && m.spread > 0);
+      logger.info(`${marketsWithSpreads.length} markets have valid spread data`);
+
+      // Step 3: Score and rank markets by opportunity potential using spread-based scoring
+      const topMarkets = this.marketScorer.selectTopMarkets(marketsWithSpreads, this.topMarketsCount);
+
+      logger.info('🎯 SPREAD-BASED STRATEGY:', {
+        monitoring: `Top ${topMarkets.length} markets by spread × volume`,
         totalAvailable: `${allMarkets.length} active markets discovered`,
-        approach: 'Real-time WebSocket monitoring (avoids rate limits)',
+        endingWithin: '14 days',
+        approach: 'Real-time WebSocket monitoring with spread-based prioritization',
       });
 
-      // Step 3: Subscribe to top markets via WebSocket (fast layer)
+      // Step 4: Subscribe to top markets via WebSocket (fast layer)
       // Collect all token IDs first, then subscribe in ONE batch
       const allTokenIds: string[] = [];
 

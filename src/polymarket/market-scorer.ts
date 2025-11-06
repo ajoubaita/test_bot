@@ -8,38 +8,53 @@ export interface ScoredMarket extends MarketWithVolume {
 
 export class MarketScorer {
   /**
-   * Score markets based on arbitrage opportunity potential
+   * Score markets based on arbitrage opportunity potential using spread-based prioritization
+   * Formula: Priority = (Bid-Ask Spread × Volume) / 100
    * Higher score = more likely to have arbitrage opportunities
    */
   scoreMarket(market: MarketWithVolume): ScoredMarket {
     let score = 0;
     let reasons: string[] = [];
 
-    // Volume score (sweet spot is our target range)
-    const volumeScore = this.getVolumeScore(market.volume);
-    score += volumeScore * 40; // 40% weight
-    if (volumeScore > 0.7) {
-      reasons.push('optimal-volume');
+    // Spread-based scoring (Strategy A)
+    // Markets with wider spreads have more arbitrage potential
+    if (market.spread && market.spread > 0) {
+      // Priority = (Spread × Volume) / 100
+      score = (market.spread * market.volume) / 100;
+
+      if (market.spread > 0.05) {
+        reasons.push('wide-spread');
+      }
+      if (market.volume > 50000) {
+        reasons.push('high-volume');
+      }
+    } else {
+      // Fallback to volume-based scoring if spread not available
+      score = market.volume / 1000;
+      reasons.push('volume-only');
     }
 
-    // Volatility indicator (markets near 0.5 probability have more arbitrage potential)
-    // We'll estimate this from the market question for now
-    const volatilityScore = this.estimateVolatilityScore(market);
-    score += volatilityScore * 30; // 30% weight
-    if (volatilityScore > 0.7) {
-      reasons.push('high-volatility');
-    }
-
-    // Market type score (binary markets easier for arbitrage)
-    const typeScore = market.outcomes.length === 2 ? 1 : 0.5;
-    score += typeScore * 20; // 20% weight
-    if (typeScore === 1) {
+    // Bonus for binary markets (easier to arbitrage)
+    if (market.outcomes.length === 2) {
+      score *= 1.2; // 20% bonus
       reasons.push('binary-market');
     }
 
-    // Recency boost (newer markets more active)
-    const recencyScore = this.getRecencyScore(market);
-    score += recencyScore * 10; // 10% weight
+    // Bonus for markets ending soon (more volatility)
+    if (market.endDate) {
+      try {
+        const endDate = new Date(market.endDate);
+        const now = new Date();
+        const daysUntilEnd = (endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
+
+        if (daysUntilEnd <= 7) {
+          score *= 1.3; // 30% bonus for markets ending within 7 days
+          reasons.push('ending-soon');
+        }
+      } catch (e) {
+        // Ignore date parsing errors
+      }
+    }
 
     return {
       ...market,
@@ -89,9 +104,10 @@ export class MarketScorer {
 
   /**
    * Score and rank all markets, return top N
+   * Note: Markets should have spreads pre-calculated before calling this
    */
   selectTopMarkets(markets: MarketWithVolume[], topN: number): ScoredMarket[] {
-    logger.info(`Scoring ${markets.length} markets...`);
+    logger.info(`Scoring ${markets.length} markets with spread-based algorithm...`);
 
     const scoredMarkets = markets.map(m => this.scoreMarket(m));
 
@@ -100,17 +116,18 @@ export class MarketScorer {
 
     const topMarkets = scoredMarkets.slice(0, topN);
 
-    logger.info(`Selected top ${topMarkets.length} markets`, {
+    logger.info(`Selected top ${topMarkets.length} markets using spread-based scoring`, {
       avgScore: (topMarkets.reduce((sum, m) => sum + m.score, 0) / topMarkets.length).toFixed(2),
       topScore: topMarkets[0]?.score,
       bottomScore: topMarkets[topMarkets.length - 1]?.score,
     });
 
     // Log top 5 markets
-    logger.info('Top 5 markets by score:', {
+    logger.info('Top 5 markets by spread-based score:', {
       markets: topMarkets.slice(0, 5).map(m => ({
         question: m.question.substring(0, 50) + '...',
         volume: `$${Math.round(m.volume).toLocaleString()}`,
+        spread: m.spread?.toFixed(4) || 'N/A',
         score: m.score,
         reason: m.reason,
       })),

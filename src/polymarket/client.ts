@@ -159,7 +159,7 @@ export class PolymarketClient extends EventEmitter {
     this.ws.send(JSON.stringify(subscribeMessage));
     this.subscribedMarkets.add(marketId);
 
-    logger.info('Subscribed to market', { marketId });
+    // Reduced logging to avoid spam (logged at debug level only)
   }
 
   unsubscribeFromMarket(marketId: string): void {

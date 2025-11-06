@@ -18,23 +18,19 @@ export class MarketScanner {
 
   async fetchActiveMarkets(): Promise<MarketWithVolume[]> {
     try {
-      logger.info('Fetching ALL markets from Polymarket with parallel requests...', {
+      logger.info('Fetching markets from Polymarket (will stop after finding enough)...', {
         minVolume: this.minVolume,
         maxVolume: this.maxVolume,
       });
 
       const startTime = Date.now();
-      const limit = 500; // Larger batches for fewer requests
-      const maxParallelRequests = 5; // Fetch multiple pages simultaneously
+      const limit = 500;
+      const maxParallelRequests = 3; // Reduced from 5 to be less aggressive
+      const targetMarketCount = 100; // Stop after finding 100 matching markets
+      const maxBatches = 8; // Max 20,000 markets total (was 50,000)
 
-      // First, get a sample to estimate total count
-      const firstResponse = await fetch(`${this.apiUrl}/markets?limit=1`);
-      if (!firstResponse.ok) {
-        throw new Error(`Failed to fetch markets: ${firstResponse.statusText}`);
-      }
-
-      // Fetch first batch to get idea of total markets
       let allMarkets: any[] = [];
+      let filteredCount = 0;
       let offset = 0;
       let batchNumber = 0;
 
@@ -69,18 +65,31 @@ export class MarketScanner {
           }
         }
 
+        // Count how many markets match our criteria so far
+        filteredCount = allMarkets.filter((market: any) => {
+          if (market.closed || market.active === false) return false;
+          const volume = parseFloat(market.volume || market.volume_24h || '0');
+          return volume >= this.minVolume && volume <= this.maxVolume;
+        }).length;
+
         offset += maxParallelRequests * limit;
         batchNumber++;
 
-        logger.info(`Batch ${batchNumber}: Fetched ${allMarkets.length} total markets`);
+        logger.info(`Batch ${batchNumber}: ${allMarkets.length} total, ${filteredCount} matching criteria`);
 
-        // Stop if no data returned from any request
+        // Early exit if we have enough markets
+        if (filteredCount >= targetMarketCount) {
+          logger.info(`Found ${filteredCount} markets matching criteria, stopping fetch`);
+          break;
+        }
+
+        // Stop if no data returned
         if (!hasData) {
           break;
         }
 
-        // Safety limit - stop after 20 batches (10,000 markets)
-        if (batchNumber >= 20) {
+        // Safety limit
+        if (batchNumber >= maxBatches) {
           logger.info('Reached batch limit, stopping fetch');
           break;
         }

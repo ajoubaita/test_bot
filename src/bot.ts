@@ -1,20 +1,24 @@
 import { PolymarketClient } from './polymarket/client';
 import { OrderBookManager } from './trading/orderbook-manager';
 import { ArbitrageDetector } from './strategies/arbitrage-detector';
+import { CrossMarketArbitrageDetector } from './strategies/cross-market-arbitrage';
 import { OrderExecutor } from './trading/order-executor';
 import { RiskManager } from './risk/risk-manager';
 import { LatencyMonitor } from './monitoring/latency-monitor';
 import { MarketScanner } from './polymarket/market-scanner';
 import { MarketScorer } from './polymarket/market-scorer';
 import { ComprehensiveScanner } from './polymarket/comprehensive-scanner';
+import { KalshiClient } from './kalshi/client';
 import { BotConfig } from './types';
 import { logger } from './utils/logger';
 
 export class PolymarketHFTBot {
   private config: BotConfig;
   private client: PolymarketClient;
+  private kalshiClient: KalshiClient;
   private orderBookManager: OrderBookManager;
   private arbitrageDetector: ArbitrageDetector;
+  private crossMarketDetector: CrossMarketArbitrageDetector;
   private orderExecutor: OrderExecutor;
   private riskManager: RiskManager;
   private latencyMonitor: LatencyMonitor;
@@ -25,9 +29,12 @@ export class PolymarketHFTBot {
   private detectionIntervalMs = 100; // Check for opportunities every 100ms
   private detectionTimer?: NodeJS.Timeout;
   private marketRefreshTimer?: NodeJS.Timeout;
+  private crossMarketRefreshTimer?: NodeJS.Timeout;
   private readonly topMarketsCount = 200; // Monitor top 200 markets via WebSocket
   private readonly marketRefreshIntervalMs = 5 * 60 * 1000; // Refresh every 5 minutes
+  private readonly crossMarketRefreshIntervalMs = 10 * 60 * 1000; // Refresh cross-market pairs every 10 minutes
   private readonly comprehensiveScanIntervalMs = 30 * 1000; // Scan ALL markets every 30 seconds
+  private polymarketMarkets: any[] = [];
 
   constructor(config: BotConfig) {
     this.config = config;
@@ -71,6 +78,17 @@ export class PolymarketHFTBot {
     // Initialize comprehensive scanner for ALL markets (30s interval)
     this.comprehensiveScanner = new ComprehensiveScanner(this.comprehensiveScanIntervalMs);
 
+    // Initialize Kalshi client for cross-market arbitrage
+    this.kalshiClient = new KalshiClient();
+
+    // Initialize cross-market arbitrage detector
+    this.crossMarketDetector = new CrossMarketArbitrageDetector(
+      this.kalshiClient,
+      this.orderBookManager,
+      0.03, // 3 cent minimum price difference
+      0.75  // 75% title similarity minimum
+    );
+
     this.setupEventHandlers();
   }
 
@@ -93,6 +111,11 @@ export class PolymarketHFTBot {
     // Handle detected opportunities
     this.arbitrageDetector.on('opportunity', (opportunity) => {
       this.handleOpportunity(opportunity);
+    });
+
+    // Handle cross-market arbitrage opportunities
+    this.crossMarketDetector.on('opportunity', (opportunity) => {
+      this.handleCrossMarketOpportunity(opportunity);
     });
 
     // Handle execution events
@@ -146,10 +169,23 @@ export class PolymarketHFTBot {
           logger.info('🔄 HYBRID SCAN: Refreshing market rankings...');
           await this.discoverAndSubscribeToMarkets();
         }, this.marketRefreshIntervalMs);
+
+        // Initialize cross-market arbitrage pairs
+        logger.info('🔄 CROSS-MARKET: Matching markets between Kalshi and Polymarket...');
+        await this.crossMarketDetector.updateMarketPairs(this.polymarketMarkets);
+
+        // Refresh cross-market pairs periodically
+        this.crossMarketRefreshTimer = setInterval(async () => {
+          logger.info('🔄 CROSS-MARKET: Refreshing market pairs...');
+          await this.crossMarketDetector.updateMarketPairs(this.polymarketMarkets);
+        }, this.crossMarketRefreshIntervalMs);
       }
 
       // Start periodic opportunity detection
       this.startOpportunityDetection();
+
+      // Start periodic cross-market detection (slower, every 10 seconds)
+      this.startCrossMarketDetection();
 
       // Start periodic stats reporting
       this.startStatsReporting();
@@ -167,6 +203,14 @@ export class PolymarketHFTBot {
     this.detectionTimer = setInterval(() => {
       this.detectAndExecuteOpportunities();
     }, this.detectionIntervalMs);
+  }
+
+  private startCrossMarketDetection(): void {
+    // Run cross-market detection every 10 seconds (slower than regular detection)
+    // This is slower because it requires REST API calls to Kalshi
+    setInterval(() => {
+      this.detectCrossMarketOpportunities();
+    }, 10000); // 10 seconds
   }
 
   private async discoverAndSubscribeToMarkets(): Promise<void> {
@@ -215,6 +259,9 @@ export class PolymarketHFTBot {
 
       // Step 3: Score and rank markets by opportunity potential using spread-based scoring
       const topMarkets = this.marketScorer.selectTopMarkets(marketsWithSpreads, this.topMarketsCount);
+
+      // Store markets for cross-market arbitrage matching
+      this.polymarketMarkets = topMarkets;
 
       logger.info('🎯 SPREAD-BASED STRATEGY:', {
         monitoring: `Top ${topMarkets.length} markets by spread × volume`,
@@ -271,6 +318,19 @@ export class PolymarketHFTBot {
     }
   }
 
+  private async detectCrossMarketOpportunities(): Promise<void> {
+    if (this.riskManager.shouldHaltTrading()) {
+      return;
+    }
+
+    try {
+      const crossMarketOpportunities = await this.crossMarketDetector.detectOpportunities();
+      // Opportunities are emitted via events, no need to handle here
+    } catch (error) {
+      logger.error('Error detecting cross-market opportunities', { error });
+    }
+  }
+
   private async handleOpportunity(opportunity: any): Promise<void> {
     // Check if we should execute this opportunity
     const riskCheck = this.riskManager.canExecuteOpportunity(opportunity);
@@ -307,6 +367,40 @@ export class PolymarketHFTBot {
     await this.orderExecutor.executeOpportunity(opportunity);
   }
 
+  private async handleCrossMarketOpportunity(opportunity: any): Promise<void> {
+    // Check dry run mode
+    if (this.config.dryRun) {
+      logger.info('[DRY RUN] 🎯 CROSS-MARKET ARBITRAGE DETECTED', {
+        type: opportunity.type,
+        direction: opportunity.direction,
+        polymarket: opportunity.polymarketQuestion.substring(0, 60),
+        kalshi: opportunity.kalshiTitle.substring(0, 60),
+        polymarketPrice: opportunity.polymarketPrice.toFixed(3),
+        kalshiPrice: opportunity.kalshiPrice.toFixed(3),
+        priceDifference: opportunity.priceDifference.toFixed(3),
+        expectedProfit: `$${opportunity.expectedProfit.toFixed(2)}`,
+        profitPercentage: `${(opportunity.profitPercentage * 100).toFixed(2)}%`,
+        similarity: opportunity.similarityScore.toFixed(2),
+      });
+      return;
+    }
+
+    // Check if trading is enabled
+    if (!this.config.enableTrading) {
+      logger.info('[TRADING DISABLED] Cross-market opportunity detected but not executed', {
+        direction: opportunity.direction,
+        expectedProfit: opportunity.expectedProfit,
+      });
+      return;
+    }
+
+    // Note: Cross-platform execution would require Kalshi trading credentials
+    logger.warn('Cross-market execution not yet implemented (requires Kalshi trading API)', {
+      opportunity: opportunity.direction,
+      expectedProfit: `$${opportunity.expectedProfit.toFixed(2)}`,
+    });
+  }
+
   private startStatsReporting(): void {
     // Report statistics every 60 seconds
     setInterval(() => {
@@ -332,6 +426,10 @@ export class PolymarketHFTBot {
     logger.info('Arbitrage Opportunities Detected:', {
       total: this.arbitrageDetector.getOpportunityCount(),
     });
+
+    // Cross-market stats
+    const crossMarketStats = this.crossMarketDetector.getStats();
+    logger.info('Cross-Market Arbitrage Stats:', crossMarketStats);
 
     // Execution stats
     logger.info('Active Orders:', {
@@ -360,6 +458,11 @@ export class PolymarketHFTBot {
     // Stop market refresh timer
     if (this.marketRefreshTimer) {
       clearInterval(this.marketRefreshTimer);
+    }
+
+    // Stop cross-market refresh timer
+    if (this.crossMarketRefreshTimer) {
+      clearInterval(this.crossMarketRefreshTimer);
     }
 
     // Stop comprehensive scanner

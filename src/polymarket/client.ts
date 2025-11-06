@@ -21,6 +21,7 @@ export class PolymarketClient extends EventEmitter {
   private maxReconnectAttempts = 10;
   private reconnectDelay = 1000;
   private subscribedMarkets: Set<string> = new Set();
+  private pingInterval: NodeJS.Timeout | null = null;
 
   constructor(config: PolymarketConfig) {
     super();
@@ -57,6 +58,9 @@ export class PolymarketClient extends EventEmitter {
       this.ws.on('open', () => {
         logger.info('WebSocket connection established');
         this.reconnectAttempts = 0;
+
+        // Start PING interval to keep connection alive
+        this.startPingInterval();
 
         // Resubscribe to markets if any
         this.subscribedMarkets.forEach(marketId => {
@@ -105,6 +109,12 @@ export class PolymarketClient extends EventEmitter {
   }
 
   private handleWebSocketClose(): void {
+    // Stop ping interval
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
+
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
       this.reconnectAttempts++;
       const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
@@ -122,6 +132,15 @@ export class PolymarketClient extends EventEmitter {
       logger.error('Max WebSocket reconnection attempts reached');
       this.emit('disconnected');
     }
+  }
+
+  private startPingInterval(): void {
+    // Send PING every 10 seconds to keep connection alive
+    this.pingInterval = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send('PING');
+      }
+    }, 10000);
   }
 
   private handleWebSocketMessage(message: any): void {
@@ -207,13 +226,15 @@ export class PolymarketClient extends EventEmitter {
     }
 
     // Send ALL asset IDs in a single subscription message
+    // Note: Polymarket expects "assets_ids" (with 's' before underscore) not "asset_ids"
     const subscribeMessage = {
-      type: 'subscribe',
-      asset_ids: marketIds,
+      assets_ids: marketIds,  // ✅ CORRECT: assets_ids (not asset_ids)
+      type: 'market',         // ✅ CORRECT: type = 'market' (not 'subscribe')
     };
 
     logger.info('Sending batch WebSocket subscription', {
       tokenCount: marketIds.length,
+      messageFormat: subscribeMessage,
       sampleTokens: marketIds.slice(0, 3).map(id => id.substring(0, 20) + '...')
     });
 

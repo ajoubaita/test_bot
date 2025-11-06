@@ -80,9 +80,9 @@ export interface RiskLimits {
 }
 
 export interface BotConfig {
-  polymarketApiKey: string;
-  polymarketSecret: string;
-  polymarketPassphrase: string;
+  polymarketApiKey?: string;
+  polymarketSecret?: string;
+  polymarketPassphrase?: string;
   privateKey: string;
   chainId: number;
   marketsToMonitor: string[];

@@ -4,25 +4,16 @@ import { BotConfig } from '../types';
 dotenv.config();
 
 export function loadConfig(): BotConfig {
-  const requiredEnvVars = [
-    'POLYMARKET_API_KEY',
-    'POLYMARKET_SECRET',
-    'POLYMARKET_PASSPHRASE',
-    'PRIVATE_KEY',
-  ];
-
-  // Check required environment variables
-  for (const envVar of requiredEnvVars) {
-    if (!process.env[envVar]) {
-      throw new Error(`Missing required environment variable: ${envVar}`);
-    }
+  // Only private key is required - API credentials will be auto-generated if not provided
+  if (!process.env.PRIVATE_KEY) {
+    throw new Error('Missing required environment variable: PRIVATE_KEY');
   }
 
   return {
-    polymarketApiKey: process.env.POLYMARKET_API_KEY!,
-    polymarketSecret: process.env.POLYMARKET_SECRET!,
-    polymarketPassphrase: process.env.POLYMARKET_PASSPHRASE!,
-    privateKey: process.env.PRIVATE_KEY!,
+    polymarketApiKey: process.env.POLYMARKET_API_KEY,
+    polymarketSecret: process.env.POLYMARKET_SECRET,
+    polymarketPassphrase: process.env.POLYMARKET_PASSPHRASE,
+    privateKey: process.env.PRIVATE_KEY,
     chainId: parseInt(process.env.CHAIN_ID || '137', 10),
     marketsToMonitor: process.env.MARKETS_TO_MONITOR?.split(',').filter(Boolean) || [],
     riskLimits: {

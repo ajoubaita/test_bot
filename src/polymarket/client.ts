@@ -6,9 +6,9 @@ import { Market, OrderBook, OrderBookLevel } from '../types';
 import { EventEmitter } from 'events';
 
 export interface PolymarketConfig {
-  apiKey: string;
-  secret: string;
-  passphrase: string;
+  apiKey?: string;
+  secret?: string;
+  passphrase?: string;
   privateKey: string;
   chainId: number;
 }
@@ -27,20 +27,26 @@ export class PolymarketClient extends EventEmitter {
 
     this.wallet = new ethers.Wallet(config.privateKey);
 
+    // Initialize ClobClient - it will auto-generate API credentials if not provided
+    const clobConfig = config.apiKey && config.secret && config.passphrase
+      ? {
+          apiKey: config.apiKey,
+          secret: config.secret,
+          passphrase: config.passphrase,
+        }
+      : undefined;
+
     this.clobClient = new ClobClient(
       'https://clob.polymarket.com',
       config.chainId,
       this.wallet.privateKey,
-      {
-        apiKey: config.apiKey,
-        secret: config.secret,
-        passphrase: config.passphrase,
-      }
+      clobConfig
     );
 
     logger.info('Polymarket client initialized', {
       address: this.wallet.address,
       chainId: config.chainId,
+      credentialsProvided: !!clobConfig,
     });
   }
 

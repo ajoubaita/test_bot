@@ -34,7 +34,8 @@ export class PolymarketHFTBot {
   private readonly marketRefreshIntervalMs = 5 * 60 * 1000; // Refresh every 5 minutes
   private readonly crossMarketRefreshIntervalMs = 10 * 60 * 1000; // Refresh cross-market pairs every 10 minutes
   private readonly comprehensiveScanIntervalMs = 30 * 1000; // Scan ALL markets every 30 seconds
-  private polymarketMarkets: any[] = [];
+  private polymarketMarkets: any[] = []; // ALL markets for cross-market arbitrage
+  private topPolymarketMarkets: any[] = []; // Top 200 for WebSocket monitoring
 
   constructor(config: BotConfig) {
     this.config = config;
@@ -233,21 +234,26 @@ export class PolymarketHFTBot {
     try {
       logger.info('🔍 DUAL-LAYER DISCOVERY: Scanning and ranking all markets...');
 
-      // Step 1: Scan all markets matching volume criteria
+      // Step 1: Scan ALL active markets (14-day expiry filter only)
       const allMarkets = await this.marketScanner.scanAndFilterMarkets();
 
       if (allMarkets.length === 0) {
-        logger.warn('No markets found matching volume criteria ($10k-$100k)');
+        logger.warn('No active markets found');
         return;
       }
 
-      logger.info(`Found ${allMarkets.length} markets matching volume criteria`);
+      logger.info(`Found ${allMarkets.length} active markets ending within 14 days`);
 
-      // Filter to markets with volume > $1000 to focus on liquid markets
+      // Store ALL markets for cross-market arbitrage (no volume filter!)
+      // Cross-market arbitrage can profit from ANY market with price differences
+      this.polymarketMarkets = allMarkets;
+      logger.info(`💰 CROSS-MARKET: Stored ${allMarkets.length} markets for cross-market arbitrage matching`);
+
+      // For WebSocket monitoring, filter to liquid markets with volume > $1000
       const liquidMarkets = allMarkets.filter(m => m.volume >= 1000);
-      logger.info(`Filtered to ${liquidMarkets.length} markets with volume >= $1k`);
+      logger.info(`Filtered to ${liquidMarkets.length} markets with volume >= $1k for WebSocket monitoring`);
 
-      // Step 2: Fetch spreads for all liquid markets (for spread-based scoring)
+      // Step 2: Fetch spreads for liquid markets only (for spread-based scoring)
       logger.info('Fetching orderbook spreads for liquid markets...');
       const spreadFetchStart = Date.now();
 
@@ -276,21 +282,21 @@ export class PolymarketHFTBot {
       // Step 3: Score and rank markets by opportunity potential using spread-based scoring
       const topMarkets = this.marketScorer.selectTopMarkets(marketsWithSpreads, this.topMarketsCount);
 
-      // Store markets for cross-market arbitrage matching
-      this.polymarketMarkets = topMarkets;
+      // Store top markets for WebSocket monitoring (limit to 200 to avoid overload)
+      this.topPolymarketMarkets = topMarkets;
 
-      logger.info('🎯 SPREAD-BASED STRATEGY:', {
-        monitoring: `Top ${topMarkets.length} markets by spread × volume`,
-        totalAvailable: `${allMarkets.length} active markets discovered`,
+      logger.info('🎯 HYBRID STRATEGY:', {
+        webSocketMonitoring: `Top ${topMarkets.length} liquid markets by spread × volume`,
+        crossMarketMatching: `ALL ${allMarkets.length} markets (no volume filter)`,
         endingWithin: '14 days',
-        approach: 'Real-time WebSocket monitoring with spread-based prioritization',
+        approach: 'WebSocket for spreads + REST for cross-market arbitrage',
       });
 
       // Step 4: Subscribe to top markets via WebSocket (fast layer)
       // Collect all token IDs first, then subscribe in ONE batch
       const allTokenIds: string[] = [];
 
-      for (const market of topMarkets) {
+      for (const market of this.topPolymarketMarkets) {
         // Get token IDs for this market
         const tokens = await this.marketScanner.getMarketTokens(market.id);
         allTokenIds.push(...tokens);
@@ -301,7 +307,7 @@ export class PolymarketHFTBot {
       if (allTokenIds.length > 0) {
         await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
         this.client.subscribeToMarkets(allTokenIds);
-        logger.info(`✅ FAST LAYER: Subscribed to ${allTokenIds.length} tokens across ${topMarkets.length} top-ranked markets via WebSocket`);
+        logger.info(`✅ WEBSOCKET: Subscribed to ${allTokenIds.length} tokens across ${this.topPolymarketMarkets.length} top-ranked markets`);
       } else {
         logger.warn('No tokens found to subscribe to');
       }

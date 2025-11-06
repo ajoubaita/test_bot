@@ -34,7 +34,7 @@ export class PolymarketHFTBot {
   private readonly marketRefreshIntervalMs = 5 * 60 * 1000; // Refresh every 5 minutes
   private readonly crossMarketRefreshIntervalMs = 10 * 60 * 1000; // Refresh cross-market pairs every 10 minutes
   private readonly comprehensiveScanIntervalMs = 30 * 1000; // Scan ALL markets every 30 seconds
-  private polymarketMarkets: any[] = []; // ALL markets for cross-market arbitrage
+  private polymarketMarkets: any[] = []; // $10k-$50k volume markets for cross-market arbitrage
   private topPolymarketMarkets: any[] = []; // Top 200 for WebSocket monitoring
 
   constructor(config: BotConfig) {
@@ -244,10 +244,11 @@ export class PolymarketHFTBot {
 
       logger.info(`Found ${allMarkets.length} active markets ending within 14 days`);
 
-      // Store ALL markets for cross-market arbitrage (no volume filter!)
-      // Cross-market arbitrage can profit from ANY market with price differences
-      this.polymarketMarkets = allMarkets;
-      logger.info(`💰 CROSS-MARKET: Stored ${allMarkets.length} markets for cross-market arbitrage matching`);
+      // Filter markets for cross-market arbitrage: $10k-$50k volume
+      // Sweet spot: liquid enough for execution, but broader than top 200
+      const arbitrageMarkets = allMarkets.filter(m => m.volume >= 10000 && m.volume <= 50000);
+      this.polymarketMarkets = arbitrageMarkets;
+      logger.info(`💰 CROSS-MARKET: Filtered to ${arbitrageMarkets.length} markets with $10k-$50k volume for arbitrage matching`);
 
       // For WebSocket monitoring, filter to liquid markets with volume > $1000
       const liquidMarkets = allMarkets.filter(m => m.volume >= 1000);
@@ -287,9 +288,9 @@ export class PolymarketHFTBot {
 
       logger.info('🎯 HYBRID STRATEGY:', {
         webSocketMonitoring: `Top ${topMarkets.length} liquid markets by spread × volume`,
-        crossMarketMatching: `ALL ${allMarkets.length} markets (no volume filter)`,
+        crossMarketMatching: `${arbitrageMarkets.length} markets with $10k-$50k volume`,
         endingWithin: '14 days',
-        approach: 'WebSocket for spreads + REST for cross-market arbitrage',
+        approach: 'Optimized for liquidity + execution speed',
       });
 
       // Step 4: Subscribe to top markets via WebSocket (fast layer)

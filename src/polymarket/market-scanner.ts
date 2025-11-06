@@ -18,19 +18,14 @@ export class MarketScanner {
 
   async fetchActiveMarkets(): Promise<MarketWithVolume[]> {
     try {
-      logger.info('Fetching markets from Polymarket (will stop after finding enough)...', {
-        minVolume: this.minVolume,
-        maxVolume: this.maxVolume,
-      });
+      logger.info('Fetching ALL active markets from Polymarket...');
 
       const startTime = Date.now();
       const limit = 500;
       const maxParallelRequests = 3; // Reduced from 5 to be less aggressive
-      const targetMarketCount = 100; // Stop after finding 100 matching markets
-      const maxBatches = 8; // Max 20,000 markets total (was 50,000)
+      const maxBatches = 24; // Fetch up to 36,000 markets (was 12,000)
 
       let allMarkets: any[] = [];
-      let filteredCount = 0;
       let offset = 0;
       let batchNumber = 0;
 
@@ -66,23 +61,10 @@ export class MarketScanner {
           }
         }
 
-        // Count how many markets match our criteria so far
-        filteredCount = allMarkets.filter((market: any) => {
-          if (market.closed || market.active === false) return false;
-          const volume = parseFloat(market.volume || market.volume_24h || '0');
-          return volume >= this.minVolume && volume <= this.maxVolume;
-        }).length;
-
         offset += maxParallelRequests * limit;
         batchNumber++;
 
-        logger.info(`Batch ${batchNumber}: ${allMarkets.length} total, ${filteredCount} matching criteria`);
-
-        // Early exit if we have enough markets
-        if (filteredCount >= targetMarketCount) {
-          logger.info(`Found ${filteredCount} markets matching criteria, stopping fetch`);
-          break;
-        }
+        logger.info(`Batch ${batchNumber}: ${allMarkets.length} total active markets fetched`);
 
         // Stop if no data returned
         if (!hasData) {
@@ -99,45 +81,37 @@ export class MarketScanner {
       const fetchTime = Date.now() - startTime;
       logger.info(`Fetched ${allMarkets.length} total markets in ${fetchTime}ms`);
 
-      // DEBUG: Log sample volumes to understand the data
-      const sampleVolumes = allMarkets
-        .slice(0, 20)
-        .map((m: any) => ({
-          question: (m.question || m.title || 'Unknown').substring(0, 50),
-          volume: m.volume,
-          volume_24h: m.volume_24h,
-          volumeParsed: parseFloat(m.volume || m.volume_24h || '0'),
-          active: m.active,
-          closed: m.closed,
-        }));
-      logger.info('DEBUG: Sample market volumes from API:', { samples: sampleVolumes });
+      // DEBUG: Log FULL market object to see all available fields
+      if (allMarkets.length > 0) {
+        logger.info('DEBUG: Full market object from API:', {
+          sampleMarket: allMarkets[0],
+          availableFields: Object.keys(allMarkets[0]),
+        });
+      }
 
-      // Filter markets by volume and active status
+      // Filter markets - keep ALL active markets, ignore volume filter
       const filteredMarkets = allMarkets
         .filter((market: any) => {
           // Must be active and not closed
           if (market.closed || market.active === false) {
             return false;
           }
-          // Must match volume criteria
-          const volume = parseFloat(market.volume || market.volume_24h || '0');
-          return volume >= this.minVolume && volume <= this.maxVolume;
+          // Include all active markets regardless of volume
+          return true;
         })
         .map((market: any) => ({
           id: market.id || market.condition_id,
           question: market.question || market.title || 'Unknown',
           active: market.active !== false,
           closed: market.closed === true,
-          outcomeTokens: market.tokens || [],
+          // Try multiple possible token field names
+          outcomeTokens: market.tokens || market.clobTokenIds || market.outcome_tokens || [],
           outcomes: market.outcomes || ['YES', 'NO'],
           volume: parseFloat(market.volume || market.volume_24h || '0'),
           volume24h: parseFloat(market.volume_24h || market.volume || '0'),
         }));
 
-      logger.info(`Found ${filteredMarkets.length} markets matching volume criteria`, {
-        minVolume: this.minVolume,
-        maxVolume: this.maxVolume,
-      });
+      logger.info(`Found ${filteredMarkets.length} active markets (ALL markets, no volume filter applied)`);
 
       // Log sample of markets found
       if (filteredMarkets.length > 0) {
@@ -197,10 +171,10 @@ export class MarketScanner {
 
       logger.info('Market scan complete', {
         totalFound: markets.length,
-        volumeRange: {
-          min: this.minVolume,
-          max: this.maxVolume,
-        },
+        topVolumeMarkets: markets.slice(0, 5).map(m => ({
+          question: m.question.substring(0, 40),
+          volume: `$${Math.round(m.volume).toLocaleString()}`,
+        })),
       });
 
       return markets;

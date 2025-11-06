@@ -123,13 +123,25 @@ export class ComprehensiveScanner {
     try {
       // Get token IDs for this market
       const tokens = market.outcomeTokens || [];
+      let tokensFetched = false;
 
       if (tokens.length === 0) {
         // Try to fetch from API if not available
-        const response = await fetch(`https://gamma-api.polymarket.com/markets/${market.id}`);
-        if (response.ok) {
-          const data: any = await response.json();
-          tokens.push(...(data.tokens || []));
+        try {
+          const response = await fetch(`https://gamma-api.polymarket.com/markets/${market.id}`);
+          if (response.ok) {
+            const data: any = await response.json();
+            const fetchedTokens = data.tokens || [];
+            tokens.push(...fetchedTokens);
+            tokensFetched = true;
+            if (fetchedTokens.length === 0) {
+              logger.warn(`DEBUG: No tokens in API response for market ${market.id}: ${market.question}`);
+            }
+          } else {
+            logger.warn(`DEBUG: Failed to fetch market ${market.id}: ${response.status}`);
+          }
+        } catch (err) {
+          logger.warn(`DEBUG: Error fetching market ${market.id}:`, err);
         }
       }
 
@@ -145,6 +157,7 @@ export class ComprehensiveScanner {
           const response = await fetch(`${this.apiUrl}/book?token_id=${tokenId}`);
 
           if (!response.ok) {
+            logger.warn(`DEBUG: Order book fetch failed for token ${tokenId}: ${response.status}`);
             continue;
           }
 
@@ -165,14 +178,14 @@ export class ComprehensiveScanner {
 
           orderBooks.push(orderBook);
         } catch (error) {
-          // Silently continue on individual token errors
+          logger.warn(`DEBUG: Exception fetching order book for token ${tokenId}:`, error);
           continue;
         }
       }
 
       return orderBooks;
     } catch (error) {
-      // Return empty array on market-level errors
+      logger.warn(`DEBUG: Market-level error for ${market.id}:`, error);
       return [];
     }
   }

@@ -146,6 +146,7 @@ export class MarketScanner {
             question: m.question,
             volume: m.volume,
             id: m.id,
+            outcomeTokens: m.outcomeTokens,
           })),
         });
       }
@@ -163,12 +164,24 @@ export class MarketScanner {
       const response = await fetch(`${this.apiUrl}/markets/${conditionId}`);
 
       if (!response.ok) {
-        logger.warn(`Failed to fetch market details for ${conditionId}`);
+        logger.warn(`Failed to fetch market details for ${conditionId}`, {
+          status: response.status,
+          statusText: response.statusText,
+        });
         return [];
       }
 
       const market: any = await response.json();
-      return market.tokens || market.outcome_tokens || [];
+      const tokens = market.tokens || market.outcome_tokens || [];
+
+      logger.info(`DEBUG: Fetched tokens for market ${conditionId}`, {
+        conditionId,
+        tokensFound: tokens.length,
+        tokens: tokens,
+        marketTitle: market.question || market.title,
+      });
+
+      return tokens;
     } catch (error) {
       logger.error('Error fetching market tokens', { error, conditionId });
       return [];

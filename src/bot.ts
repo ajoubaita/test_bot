@@ -25,7 +25,7 @@ export class PolymarketHFTBot {
   private detectionIntervalMs = 100; // Check for opportunities every 100ms
   private detectionTimer?: NodeJS.Timeout;
   private marketRefreshTimer?: NodeJS.Timeout;
-  private readonly topMarketsCount = 500; // Monitor top 500 markets via WebSocket (fast layer)
+  private readonly topMarketsCount = 100; // Monitor top 100 markets via WebSocket to avoid rate limits
   private readonly marketRefreshIntervalMs = 5 * 60 * 1000; // Refresh every 5 minutes
   private readonly comprehensiveScanIntervalMs = 30 * 1000; // Scan ALL markets every 30 seconds
 
@@ -183,13 +183,17 @@ export class PolymarketHFTBot {
 
       logger.info(`Found ${allMarkets.length} markets matching volume criteria`);
 
-      // Step 2: Score and rank markets by opportunity potential
-      const topMarkets = this.marketScorer.selectTopMarkets(allMarkets, this.topMarketsCount);
+      // Filter to markets with volume > $1000 to focus on liquid markets
+      const liquidMarkets = allMarkets.filter(m => m.volume >= 1000);
+      logger.info(`Filtered to ${liquidMarkets.length} markets with volume >= $1k`);
 
-      logger.info('🎯 DUAL-LAYER STRATEGY:', {
-        fastLayer: `WebSocket monitoring for top ${topMarkets.length} markets (<100ms latency)`,
-        comprehensiveLayer: `REST API polling for ALL ${allMarkets.length} markets (${this.comprehensiveScanIntervalMs / 1000}s interval)`,
-        strategy: 'No markets omitted from analysis',
+      // Step 2: Score and rank markets by opportunity potential
+      const topMarkets = this.marketScorer.selectTopMarkets(liquidMarkets, this.topMarketsCount);
+
+      logger.info('🎯 WEBSOCKET-ONLY STRATEGY:', {
+        monitoring: `Top ${topMarkets.length} highest-volume markets`,
+        totalAvailable: `${allMarkets.length} active markets discovered`,
+        approach: 'Real-time WebSocket monitoring (avoids rate limits)',
       });
 
       // Step 3: Subscribe to top markets via WebSocket (fast layer)
@@ -208,15 +212,10 @@ export class PolymarketHFTBot {
 
       logger.info(`✅ FAST LAYER: Monitoring ${subscribedCount} tokens across ${topMarkets.length} top-ranked markets via WebSocket`);
 
-      // Step 4: Start comprehensive scanner for ALL markets (comprehensive layer)
-      this.comprehensiveScanner.startScanning(allMarkets, (orderBook) => {
-        // Feed comprehensive scan order books into the same order book manager
-        const endTimer = this.latencyMonitor.startTimer('comprehensive_scan_update');
-        this.orderBookManager.updateOrderBook(orderBook);
-        endTimer();
-      });
-
-      logger.info(`✅ COMPREHENSIVE LAYER: Scanning ALL ${allMarkets.length} markets every ${this.comprehensiveScanIntervalMs / 1000}s`);
+      // NOTE: Comprehensive REST API scanner disabled due to rate limiting (HTTP 429)
+      // Polymarket API limits prevent polling thousands of markets every 30s
+      // WebSocket-only approach for now
+      logger.info(`⚠️ REST API polling disabled to avoid rate limits. Using WebSocket-only monitoring.`);
     } catch (error) {
       logger.error('Error discovering markets', { error });
     }

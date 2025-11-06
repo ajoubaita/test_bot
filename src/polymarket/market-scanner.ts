@@ -22,8 +22,8 @@ export class MarketScanner {
 
       const startTime = Date.now();
       const limit = 500;
-      const maxParallelRequests = 3; // Reduced from 5 to be less aggressive
-      const maxBatches = 24; // Fetch up to 36,000 markets (was 12,000)
+      const maxParallelRequests = 2; // Reduced to avoid rate limits
+      const maxBatches = 6; // Fetch up to 9,000 markets to avoid rate limits
 
       let allMarkets: any[] = [];
       let offset = 0;

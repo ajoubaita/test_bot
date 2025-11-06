@@ -134,14 +134,9 @@ export class ComprehensiveScanner {
             const fetchedTokens = data.tokens || [];
             tokens.push(...fetchedTokens);
             tokensFetched = true;
-            if (fetchedTokens.length === 0) {
-              logger.warn(`DEBUG: No tokens in API response for market ${market.id}: ${market.question}`);
-            }
-          } else {
-            logger.warn(`DEBUG: Failed to fetch market ${market.id}: ${response.status}`);
           }
         } catch (err) {
-          logger.warn(`DEBUG: Error fetching market ${market.id}:`, err);
+          // Silently continue on errors
         }
       }
 
@@ -157,7 +152,7 @@ export class ComprehensiveScanner {
           const response = await fetch(`${this.apiUrl}/book?token_id=${tokenId}`);
 
           if (!response.ok) {
-            logger.warn(`DEBUG: Order book fetch failed for token ${tokenId}: ${response.status}`);
+            // Silently skip failed fetches (likely rate limited)
             continue;
           }
 
@@ -178,14 +173,14 @@ export class ComprehensiveScanner {
 
           orderBooks.push(orderBook);
         } catch (error) {
-          logger.warn(`DEBUG: Exception fetching order book for token ${tokenId}:`, error);
+          // Silently continue on errors
           continue;
         }
       }
 
       return orderBooks;
     } catch (error) {
-      logger.warn(`DEBUG: Market-level error for ${market.id}:`, error);
+      // Silently handle errors
       return [];
     }
   }

@@ -69,9 +69,15 @@ export class PolymarketClient extends EventEmitter {
       this.ws.on('message', (data: Buffer) => {
         try {
           const message = JSON.parse(data.toString());
+          logger.info('WebSocket message received', {
+            type: message.type,
+            event_type: message.event_type,
+            market: message.market,
+            asset_id: message.asset_id
+          });
           this.handleWebSocketMessage(message);
         } catch (error) {
-          logger.error('Error parsing WebSocket message', { error });
+          logger.error('Error parsing WebSocket message', { error, rawData: data.toString() });
         }
       });
 
@@ -80,8 +86,12 @@ export class PolymarketClient extends EventEmitter {
         reject(error);
       });
 
-      this.ws.on('close', () => {
-        logger.warn('WebSocket connection closed');
+      this.ws.on('close', (code, reason) => {
+        logger.warn('WebSocket connection closed', {
+          code,
+          reason: reason.toString(),
+          subscribedMarkets: this.subscribedMarkets.size
+        });
         this.handleWebSocketClose();
       });
 
@@ -156,10 +166,16 @@ export class PolymarketClient extends EventEmitter {
       assets_ids: [marketId],
     };
 
+    // Log first 3 subscriptions to see format
+    if (this.subscribedMarkets.size < 3) {
+      logger.info('Sending WebSocket subscription', {
+        marketId: marketId.substring(0, 20) + '...',
+        messageFormat: subscribeMessage
+      });
+    }
+
     this.ws.send(JSON.stringify(subscribeMessage));
     this.subscribedMarkets.add(marketId);
-
-    // Reduced logging to avoid spam (logged at debug level only)
   }
 
   unsubscribeFromMarket(marketId: string): void {

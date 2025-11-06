@@ -81,12 +81,12 @@ export class PolymarketHFTBot {
     // Initialize Kalshi client for cross-market arbitrage
     this.kalshiClient = new KalshiClient(config.kalshiApiKey, config.kalshiPrivateKey);
 
-    // Initialize cross-market arbitrage detector
+    // Initialize cross-market arbitrage detector with AGGRESSIVE matching
     this.crossMarketDetector = new CrossMarketArbitrageDetector(
       this.kalshiClient,
       this.orderBookManager,
       0.03, // 3 cent minimum price difference
-      0.75  // 75% title similarity minimum
+      0.3   // 30% title similarity minimum (lowered from 75% for broader coverage)
     );
 
     this.setupEventHandlers();

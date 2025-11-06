@@ -131,7 +131,21 @@ export class ComprehensiveScanner {
           const response = await fetch(`https://gamma-api.polymarket.com/markets/${market.id}`);
           if (response.ok) {
             const data: any = await response.json();
-            const fetchedTokens = data.tokens || [];
+
+            // Parse clobTokenIds from JSON string
+            let fetchedTokens: string[] = [];
+            if (data.clobTokenIds) {
+              try {
+                fetchedTokens = typeof data.clobTokenIds === 'string'
+                  ? JSON.parse(data.clobTokenIds)
+                  : data.clobTokenIds;
+              } catch (e) {
+                fetchedTokens = data.tokens || [];
+              }
+            } else {
+              fetchedTokens = data.tokens || [];
+            }
+
             tokens.push(...fetchedTokens);
             tokensFetched = true;
           }

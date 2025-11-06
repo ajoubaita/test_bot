@@ -81,46 +81,61 @@ export class MarketScanner {
       const fetchTime = Date.now() - startTime;
       logger.info(`Fetched ${allMarkets.length} total markets in ${fetchTime}ms`);
 
-      // DEBUG: Log FULL market object to see all available fields
-      if (allMarkets.length > 0) {
-        logger.info('DEBUG: Full market object from API:', {
-          sampleMarket: allMarkets[0],
-          availableFields: Object.keys(allMarkets[0]),
-        });
-      }
-
-      // Filter markets - keep ALL active markets, ignore volume filter
+      // Filter markets - keep only funded markets with token IDs
       const filteredMarkets = allMarkets
         .filter((market: any) => {
           // Must be active and not closed
           if (market.closed || market.active === false) {
             return false;
           }
+          // Must have clobTokenIds (funded markets only)
+          if (!market.clobTokenIds) {
+            return false;
+          }
           // Include all active markets regardless of volume
           return true;
         })
-        .map((market: any) => ({
-          id: market.id || market.condition_id,
-          question: market.question || market.title || 'Unknown',
-          active: market.active !== false,
-          closed: market.closed === true,
-          // Try multiple possible token field names
-          outcomeTokens: market.tokens || market.clobTokenIds || market.outcome_tokens || [],
-          outcomes: market.outcomes || ['YES', 'NO'],
-          volume: parseFloat(market.volume || market.volume_24h || '0'),
-          volume24h: parseFloat(market.volume_24h || market.volume || '0'),
-        }));
+        .map((market: any) => {
+          // Parse clobTokenIds from JSON string
+          let tokenIds: string[] = [];
+          try {
+            if (typeof market.clobTokenIds === 'string') {
+              tokenIds = JSON.parse(market.clobTokenIds);
+            } else if (Array.isArray(market.clobTokenIds)) {
+              tokenIds = market.clobTokenIds;
+            } else if (market.tokens) {
+              tokenIds = Array.isArray(market.tokens) ? market.tokens : JSON.parse(market.tokens);
+            }
+          } catch (e) {
+            // Failed to parse, leave empty
+          }
 
-      logger.info(`Found ${filteredMarkets.length} active markets (ALL markets, no volume filter applied)`);
+          return {
+            id: market.id || market.condition_id,
+            question: market.question || market.title || 'Unknown',
+            active: market.active !== false,
+            closed: market.closed === true,
+            outcomeTokens: tokenIds,
+            outcomes: market.outcomes || ['YES', 'NO'],
+            volume: parseFloat(market.volume || market.volume_24h || '0'),
+            volume24h: parseFloat(market.volume_24h || market.volume || '0'),
+          };
+        });
+
+      logger.info(`Found ${filteredMarkets.length} active, funded markets with token IDs`);
 
       // Log sample of markets found
       if (filteredMarkets.length > 0) {
-        logger.info('Sample markets:', {
-          markets: filteredMarkets.slice(0, 5).map(m => ({
-            question: m.question,
-            volume: m.volume,
+        const marketsWithTokens = filteredMarkets.filter(m => m.outcomeTokens.length > 0);
+        logger.info(`${marketsWithTokens.length} markets have valid tokens`);
+
+        logger.info('Sample markets with tokens:', {
+          markets: marketsWithTokens.slice(0, 5).map(m => ({
+            question: m.question.substring(0, 50),
+            volume: `$${Math.round(m.volume)}`,
             id: m.id,
-            outcomeTokens: m.outcomeTokens,
+            tokenCount: m.outcomeTokens.length,
+            tokens: m.outcomeTokens,
           })),
         });
       }
@@ -146,14 +161,21 @@ export class MarketScanner {
       }
 
       const market: any = await response.json();
-      const tokens = market.tokens || market.outcome_tokens || [];
 
-      logger.info(`DEBUG: Fetched tokens for market ${conditionId}`, {
-        conditionId,
-        tokensFound: tokens.length,
-        tokens: tokens,
-        marketTitle: market.question || market.title,
-      });
+      // Parse clobTokenIds if it's a string
+      let tokens: string[] = [];
+      if (market.clobTokenIds) {
+        try {
+          tokens = typeof market.clobTokenIds === 'string'
+            ? JSON.parse(market.clobTokenIds)
+            : market.clobTokenIds;
+        } catch (e) {
+          // Fall back to other token fields
+          tokens = market.tokens || market.outcome_tokens || [];
+        }
+      } else {
+        tokens = market.tokens || market.outcome_tokens || [];
+      }
 
       return tokens;
     } catch (error) {

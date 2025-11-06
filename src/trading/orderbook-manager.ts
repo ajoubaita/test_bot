@@ -1,5 +1,4 @@
 import { OrderBook, OrderBookLevel } from '../types';
-import { logger } from '../utils/logger';
 import { EventEmitter } from 'events';
 
 export class OrderBookManager extends EventEmitter {

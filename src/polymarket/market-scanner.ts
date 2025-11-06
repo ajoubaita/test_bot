@@ -18,25 +18,52 @@ export class MarketScanner {
 
   async fetchActiveMarkets(): Promise<MarketWithVolume[]> {
     try {
-      logger.info('Fetching active markets from Polymarket...', {
+      logger.info('Fetching ALL active markets from Polymarket...', {
         minVolume: this.minVolume,
         maxVolume: this.maxVolume,
       });
 
-      // Fetch markets from Polymarket's public API
-      const response = await fetch(`${this.apiUrl}/markets?active=true&closed=false&limit=100`);
+      let allMarkets: any[] = [];
+      let offset = 0;
+      const limit = 100;
+      let hasMore = true;
 
-      if (!response.ok) {
-        throw new Error(`Failed to fetch markets: ${response.statusText}`);
+      // Paginate through all markets
+      while (hasMore) {
+        const response = await fetch(
+          `${this.apiUrl}/markets?active=true&closed=false&limit=${limit}&offset=${offset}`
+        );
+
+        if (!response.ok) {
+          logger.warn(`Failed to fetch markets at offset ${offset}: ${response.statusText}`);
+          break;
+        }
+
+        const data: any = await response.json();
+        const markets = Array.isArray(data) ? data : (data.data || []);
+
+        if (markets.length === 0) {
+          hasMore = false;
+        } else {
+          allMarkets = allMarkets.concat(markets);
+          offset += limit;
+
+          logger.info(`Fetched ${markets.length} markets (total: ${allMarkets.length})`);
+
+          // If we got less than limit, we've reached the end
+          if (markets.length < limit) {
+            hasMore = false;
+          }
+
+          // Small delay to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
       }
 
-      const data: any = await response.json();
-      const markets = Array.isArray(data) ? data : (data.data || []);
-
-      logger.info(`Fetched ${markets.length} total markets`);
+      logger.info(`Fetched ${allMarkets.length} total markets from Polymarket`);
 
       // Filter markets by volume
-      const filteredMarkets = markets
+      const filteredMarkets = allMarkets
         .filter((market: any) => {
           const volume = parseFloat(market.volume || market.volume_24h || '0');
           return volume >= this.minVolume && volume <= this.maxVolume;

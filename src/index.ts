@@ -1,8 +1,11 @@
 import { PolymarketHFTBot } from './bot';
 import { loadConfig, validateConfig } from './config';
 import { logger } from './utils/logger';
+import { HealthServer } from './server/health-server';
 
 async function main() {
+  let healthServer: HealthServer | null = null;
+
   try {
     logger.info('Polymarket HFT Bot - Starting...');
 
@@ -19,22 +22,29 @@ async function main() {
     // Create bot instance
     const bot = new PolymarketHFTBot(config);
 
-    // Handle graceful shutdown
-    process.on('SIGINT', async () => {
-      logger.info('Received SIGINT, shutting down gracefully...');
-      await bot.stop();
-      process.exit(0);
-    });
+    // Start health server
+    healthServer = new HealthServer(bot, 3000);
+    healthServer.start();
 
-    process.on('SIGTERM', async () => {
-      logger.info('Received SIGTERM, shutting down gracefully...');
+    // Handle graceful shutdown
+    const shutdown = async () => {
+      logger.info('Shutting down gracefully...');
+      if (healthServer) {
+        healthServer.stop();
+      }
       await bot.stop();
       process.exit(0);
-    });
+    };
+
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
 
     // Handle uncaught errors
     process.on('uncaughtException', (error) => {
       logger.error('Uncaught exception', { error });
+      if (healthServer) {
+        healthServer.stop();
+      }
       bot.stop().then(() => {
         process.exit(1);
       });
@@ -42,6 +52,9 @@ async function main() {
 
     process.on('unhandledRejection', (reason, promise) => {
       logger.error('Unhandled rejection', { reason, promise });
+      if (healthServer) {
+        healthServer.stop();
+      }
       bot.stop().then(() => {
         process.exit(1);
       });
@@ -53,6 +66,9 @@ async function main() {
     logger.info('Polymarket HFT Bot is now running. Press Ctrl+C to stop.');
   } catch (error) {
     logger.error('Failed to start bot', { error });
+    if (healthServer) {
+      healthServer.stop();
+    }
     process.exit(1);
   }
 }

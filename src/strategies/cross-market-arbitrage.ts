@@ -132,8 +132,12 @@ export class CrossMarketArbitrageDetector extends EventEmitter {
 
         if (!pmBestBid || !pmBestAsk) continue;
 
-        // Get Kalshi orderbook
-        const kalshiOrderBook = await this.kalshiClient.fetchOrderBook(pair.kalshiMarket.ticker);
+        // Get Kalshi orderbook (from WebSocket cache if available, else fetch via REST)
+        let kalshiOrderBook = this.kalshiClient.getOrderBook(pair.kalshiMarket.ticker);
+        if (!kalshiOrderBook) {
+          // Fallback to REST API if WebSocket not available
+          kalshiOrderBook = await this.kalshiClient.fetchOrderBook(pair.kalshiMarket.ticker);
+        }
         if (!kalshiOrderBook) continue;
 
         const kalshiPrices = this.kalshiClient.getBestPrices(kalshiOrderBook);

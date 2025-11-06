@@ -85,6 +85,8 @@ export interface BotConfig {
   polymarketPassphrase?: string;
   privateKey: string;
   chainId: number;
+  kalshiApiKey?: string;
+  kalshiPrivateKey?: string;
   marketsToMonitor: string[];
   riskLimits: RiskLimits;
   enableTrading: boolean;

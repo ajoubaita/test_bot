@@ -79,7 +79,7 @@ export class PolymarketHFTBot {
     this.comprehensiveScanner = new ComprehensiveScanner(this.comprehensiveScanIntervalMs);
 
     // Initialize Kalshi client for cross-market arbitrage
-    this.kalshiClient = new KalshiClient();
+    this.kalshiClient = new KalshiClient(config.kalshiApiKey, config.kalshiPrivateKey);
 
     // Initialize cross-market arbitrage detector
     this.crossMarketDetector = new CrossMarketArbitrageDetector(
@@ -151,8 +151,16 @@ export class PolymarketHFTBot {
     });
 
     try {
-      // Initialize client and WebSocket connection
+      // Initialize Polymarket client and WebSocket connection
       await this.client.initialize();
+
+      // Initialize Kalshi client and WebSocket connection (if credentials provided)
+      if (this.config.kalshiApiKey && this.config.kalshiPrivateKey) {
+        await this.kalshiClient.initialize();
+        logger.info('Kalshi WebSocket initialized for real-time cross-market arbitrage');
+      } else {
+        logger.warn('Kalshi WebSocket not initialized (no credentials) - will use REST API for cross-market arbitrage');
+      }
 
       // Subscribe to markets
       if (this.config.marketsToMonitor.length > 0) {
@@ -173,6 +181,14 @@ export class PolymarketHFTBot {
         // Initialize cross-market arbitrage pairs
         logger.info('🔄 CROSS-MARKET: Matching markets between Kalshi and Polymarket...');
         await this.crossMarketDetector.updateMarketPairs(this.polymarketMarkets);
+
+        // Subscribe to matched Kalshi markets on WebSocket
+        const matchedPairs = this.crossMarketDetector.getMarketPairs();
+        if (matchedPairs.length > 0 && this.config.kalshiApiKey && this.config.kalshiPrivateKey) {
+          const kalshiTickers = matchedPairs.map(pair => pair.kalshiMarket.ticker);
+          this.kalshiClient.subscribeToMarkets(kalshiTickers);
+          logger.info(`✅ Subscribed to ${kalshiTickers.length} Kalshi markets for cross-market arbitrage`);
+        }
 
         // Refresh cross-market pairs periodically
         this.crossMarketRefreshTimer = setInterval(async () => {

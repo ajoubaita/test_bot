@@ -15,6 +15,8 @@ export function loadConfig(): BotConfig {
     polymarketPassphrase: process.env.POLYMARKET_PASSPHRASE,
     privateKey: process.env.PRIVATE_KEY,
     chainId: parseInt(process.env.CHAIN_ID || '137', 10),
+    kalshiApiKey: process.env.KALSHI_API_KEY,
+    kalshiPrivateKey: process.env.KALSHI_PRIVATE_KEY,
     marketsToMonitor: process.env.MARKETS_TO_MONITOR?.split(',').filter(Boolean) || [],
     riskLimits: {
       minProfitThreshold: parseFloat(process.env.MIN_PROFIT_THRESHOLD || '0.005'),

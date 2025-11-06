@@ -98,6 +98,19 @@ export class MarketScanner {
       const fetchTime = Date.now() - startTime;
       logger.info(`Fetched ${allMarkets.length} total markets in ${fetchTime}ms`);
 
+      // DEBUG: Log sample volumes to understand the data
+      const sampleVolumes = allMarkets
+        .slice(0, 20)
+        .map((m: any) => ({
+          question: (m.question || m.title || 'Unknown').substring(0, 50),
+          volume: m.volume,
+          volume_24h: m.volume_24h,
+          volumeParsed: parseFloat(m.volume || m.volume_24h || '0'),
+          active: m.active,
+          closed: m.closed,
+        }));
+      logger.info('DEBUG: Sample market volumes from API:', { samples: sampleVolumes });
+
       // Filter markets by volume and active status
       const filteredMarkets = allMarkets
         .filter((market: any) => {

@@ -6,6 +6,7 @@ import { RiskManager } from './risk/risk-manager';
 import { LatencyMonitor } from './monitoring/latency-monitor';
 import { MarketScanner } from './polymarket/market-scanner';
 import { MarketScorer } from './polymarket/market-scorer';
+import { ComprehensiveScanner } from './polymarket/comprehensive-scanner';
 import { BotConfig } from './types';
 import { logger } from './utils/logger';
 
@@ -19,12 +20,14 @@ export class PolymarketHFTBot {
   private latencyMonitor: LatencyMonitor;
   private marketScanner: MarketScanner;
   private marketScorer: MarketScorer;
+  private comprehensiveScanner: ComprehensiveScanner;
   private isRunning = false;
   private detectionIntervalMs = 100; // Check for opportunities every 100ms
   private detectionTimer?: NodeJS.Timeout;
   private marketRefreshTimer?: NodeJS.Timeout;
-  private readonly topMarketsCount = 150; // Monitor top 150 markets by score
+  private readonly topMarketsCount = 500; // Monitor top 500 markets via WebSocket (fast layer)
   private readonly marketRefreshIntervalMs = 5 * 60 * 1000; // Refresh every 5 minutes
+  private readonly comprehensiveScanIntervalMs = 30 * 1000; // Scan ALL markets every 30 seconds
 
   constructor(config: BotConfig) {
     this.config = config;
@@ -64,6 +67,9 @@ export class PolymarketHFTBot {
 
     // Initialize market scorer for ranking markets
     this.marketScorer = new MarketScorer();
+
+    // Initialize comprehensive scanner for ALL markets (30s interval)
+    this.comprehensiveScanner = new ComprehensiveScanner(this.comprehensiveScanIntervalMs);
 
     this.setupEventHandlers();
   }
@@ -165,7 +171,7 @@ export class PolymarketHFTBot {
 
   private async discoverAndSubscribeToMarkets(): Promise<void> {
     try {
-      logger.info('🔍 HYBRID SCAN: Discovering and ranking all markets...');
+      logger.info('🔍 DUAL-LAYER DISCOVERY: Scanning and ranking all markets...');
 
       // Step 1: Scan all markets matching volume criteria
       const allMarkets = await this.marketScanner.scanAndFilterMarkets();
@@ -180,13 +186,13 @@ export class PolymarketHFTBot {
       // Step 2: Score and rank markets by opportunity potential
       const topMarkets = this.marketScorer.selectTopMarkets(allMarkets, this.topMarketsCount);
 
-      logger.info(`🎯 FAST MONITOR: Selected top ${topMarkets.length} markets for high-frequency monitoring`, {
-        strategy: 'hybrid-approach',
-        scanInterval: `${this.marketRefreshIntervalMs / 1000}s`,
-        detectionInterval: `${this.detectionIntervalMs}ms`,
+      logger.info('🎯 DUAL-LAYER STRATEGY:', {
+        fastLayer: `WebSocket monitoring for top ${topMarkets.length} markets (<100ms latency)`,
+        comprehensiveLayer: `REST API polling for ALL ${allMarkets.length} markets (${this.comprehensiveScanIntervalMs / 1000}s interval)`,
+        strategy: 'No markets omitted from analysis',
       });
 
-      // Step 3: Subscribe to top markets only
+      // Step 3: Subscribe to top markets via WebSocket (fast layer)
       let subscribedCount = 0;
       for (const market of topMarkets) {
         // Get token IDs for this market
@@ -200,7 +206,17 @@ export class PolymarketHFTBot {
         }
       }
 
-      logger.info(`✅ Actively monitoring ${subscribedCount} tokens across ${topMarkets.length} top-ranked markets`);
+      logger.info(`✅ FAST LAYER: Monitoring ${subscribedCount} tokens across ${topMarkets.length} top-ranked markets via WebSocket`);
+
+      // Step 4: Start comprehensive scanner for ALL markets (comprehensive layer)
+      this.comprehensiveScanner.startScanning(allMarkets, (orderBook) => {
+        // Feed comprehensive scan order books into the same order book manager
+        const endTimer = this.latencyMonitor.startTimer('comprehensive_scan_update');
+        this.orderBookManager.updateOrderBook(orderBook);
+        endTimer();
+      });
+
+      logger.info(`✅ COMPREHENSIVE LAYER: Scanning ALL ${allMarkets.length} markets every ${this.comprehensiveScanIntervalMs / 1000}s`);
     } catch (error) {
       logger.error('Error discovering markets', { error });
     }
@@ -315,6 +331,9 @@ export class PolymarketHFTBot {
     if (this.marketRefreshTimer) {
       clearInterval(this.marketRefreshTimer);
     }
+
+    // Stop comprehensive scanner
+    this.comprehensiveScanner.stopScanning();
 
     // Cancel all active orders
     await this.orderExecutor.cancelAllOrders();

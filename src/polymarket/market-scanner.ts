@@ -18,53 +18,85 @@ export class MarketScanner {
 
   async fetchActiveMarkets(): Promise<MarketWithVolume[]> {
     try {
-      logger.info('Fetching ALL active markets from Polymarket...', {
+      logger.info('Fetching ALL markets from Polymarket with parallel requests...', {
         minVolume: this.minVolume,
         maxVolume: this.maxVolume,
       });
 
+      const startTime = Date.now();
+      const limit = 500; // Larger batches for fewer requests
+      const maxParallelRequests = 5; // Fetch multiple pages simultaneously
+
+      // First, get a sample to estimate total count
+      const firstResponse = await fetch(`${this.apiUrl}/markets?limit=1`);
+      if (!firstResponse.ok) {
+        throw new Error(`Failed to fetch markets: ${firstResponse.statusText}`);
+      }
+
+      // Fetch first batch to get idea of total markets
       let allMarkets: any[] = [];
       let offset = 0;
-      const limit = 100;
-      let hasMore = true;
+      let batchNumber = 0;
 
-      // Paginate through all markets
-      while (hasMore) {
-        const response = await fetch(
-          `${this.apiUrl}/markets?active=true&closed=false&limit=${limit}&offset=${offset}`
-        );
+      // Parallel fetch batches
+      while (true) {
+        const promises = [];
 
-        if (!response.ok) {
-          logger.warn(`Failed to fetch markets at offset ${offset}: ${response.statusText}`);
+        // Create parallel requests for next N batches
+        for (let i = 0; i < maxParallelRequests; i++) {
+          const currentOffset = offset + (i * limit);
+          promises.push(
+            fetch(`${this.apiUrl}/markets?limit=${limit}&offset=${currentOffset}`)
+              .then(res => res.ok ? res.json() : null)
+              .catch(err => {
+                logger.warn(`Failed to fetch batch at offset ${currentOffset}`);
+                return null;
+              })
+          );
+        }
+
+        // Wait for all parallel requests
+        const results = await Promise.all(promises);
+
+        let hasData = false;
+        for (const data of results) {
+          if (data) {
+            const markets = Array.isArray(data) ? data : (data.data || []);
+            if (markets.length > 0) {
+              allMarkets = allMarkets.concat(markets);
+              hasData = true;
+            }
+          }
+        }
+
+        offset += maxParallelRequests * limit;
+        batchNumber++;
+
+        logger.info(`Batch ${batchNumber}: Fetched ${allMarkets.length} total markets`);
+
+        // Stop if no data returned from any request
+        if (!hasData) {
           break;
         }
 
-        const data: any = await response.json();
-        const markets = Array.isArray(data) ? data : (data.data || []);
-
-        if (markets.length === 0) {
-          hasMore = false;
-        } else {
-          allMarkets = allMarkets.concat(markets);
-          offset += limit;
-
-          logger.info(`Fetched ${markets.length} markets (total: ${allMarkets.length})`);
-
-          // If we got less than limit, we've reached the end
-          if (markets.length < limit) {
-            hasMore = false;
-          }
-
-          // Small delay to avoid rate limiting
-          await new Promise(resolve => setTimeout(resolve, 100));
+        // Safety limit - stop after 20 batches (10,000 markets)
+        if (batchNumber >= 20) {
+          logger.info('Reached batch limit, stopping fetch');
+          break;
         }
       }
 
-      logger.info(`Fetched ${allMarkets.length} total markets from Polymarket`);
+      const fetchTime = Date.now() - startTime;
+      logger.info(`Fetched ${allMarkets.length} total markets in ${fetchTime}ms`);
 
-      // Filter markets by volume
+      // Filter markets by volume and active status
       const filteredMarkets = allMarkets
         .filter((market: any) => {
+          // Must be active and not closed
+          if (market.closed || market.active === false) {
+            return false;
+          }
+          // Must match volume criteria
           const volume = parseFloat(market.volume || market.volume_24h || '0');
           return volume >= this.minVolume && volume <= this.maxVolume;
         })

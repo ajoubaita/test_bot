@@ -71,17 +71,18 @@ export class PolymarketClient extends EventEmitter {
       });
 
       this.ws.on('message', (data: Buffer) => {
+        const rawMessage = data.toString();
+
+        // Handle PONG responses (sent in response to our PING)
+        if (rawMessage === 'PONG') {
+          return; // Silently ignore PONG
+        }
+
         try {
-          const message = JSON.parse(data.toString());
-          logger.info('WebSocket message received', {
-            type: message.type,
-            event_type: message.event_type,
-            market: message.market,
-            asset_id: message.asset_id
-          });
+          const message = JSON.parse(rawMessage);
           this.handleWebSocketMessage(message);
         } catch (error) {
-          logger.error('Error parsing WebSocket message', { error, rawData: data.toString() });
+          logger.error('Error parsing WebSocket message', { error, rawData: rawMessage });
         }
       });
 

@@ -197,20 +197,22 @@ export class PolymarketHFTBot {
       });
 
       // Step 3: Subscribe to top markets via WebSocket (fast layer)
-      let subscribedCount = 0;
+      // Collect all token IDs first, then subscribe in ONE batch
+      const allTokenIds: string[] = [];
+
       for (const market of topMarkets) {
         // Get token IDs for this market
         const tokens = await this.marketScanner.getMarketTokens(market.id);
-
-        if (tokens.length > 0) {
-          for (const tokenId of tokens) {
-            this.client.subscribeToMarket(tokenId);
-            subscribedCount++;
-          }
-        }
+        allTokenIds.push(...tokens);
       }
 
-      logger.info(`✅ FAST LAYER: Monitoring ${subscribedCount} tokens across ${topMarkets.length} top-ranked markets via WebSocket`);
+      // Subscribe to all tokens in a SINGLE WebSocket message
+      if (allTokenIds.length > 0) {
+        this.client.subscribeToMarkets(allTokenIds);
+        logger.info(`✅ FAST LAYER: Subscribed to ${allTokenIds.length} tokens across ${topMarkets.length} top-ranked markets via WebSocket`);
+      } else {
+        logger.warn('No tokens found to subscribe to');
+      }
 
       // NOTE: Comprehensive REST API scanner disabled due to rate limiting (HTTP 429)
       // Polymarket API limits prevent polling thousands of markets every 30s

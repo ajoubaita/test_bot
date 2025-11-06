@@ -193,6 +193,36 @@ export class PolymarketClient extends EventEmitter {
     this.subscribedMarkets.add(marketId);
   }
 
+  /**
+   * Subscribe to multiple markets in a single WebSocket message
+   * This prevents the connection from closing due to too many individual messages
+   */
+  subscribeToMarkets(marketIds: string[]): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      logger.warn('Cannot subscribe - WebSocket not connected', {
+        marketCount: marketIds.length
+      });
+      marketIds.forEach(id => this.subscribedMarkets.add(id));
+      return;
+    }
+
+    // Send ALL asset IDs in a single subscription message
+    const subscribeMessage = {
+      type: 'subscribe',
+      asset_ids: marketIds,
+    };
+
+    logger.info('Sending batch WebSocket subscription', {
+      tokenCount: marketIds.length,
+      sampleTokens: marketIds.slice(0, 3).map(id => id.substring(0, 20) + '...')
+    });
+
+    this.ws.send(JSON.stringify(subscribeMessage));
+    marketIds.forEach(id => this.subscribedMarkets.add(id));
+
+    logger.info(`✅ Sent subscription for ${marketIds.length} tokens in single message`);
+  }
+
   unsubscribeFromMarket(marketId: string): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       logger.warn('Cannot unsubscribe - WebSocket not connected', { marketId });

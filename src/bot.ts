@@ -234,7 +234,9 @@ export class PolymarketHFTBot {
       }
 
       // Subscribe to all tokens in a SINGLE WebSocket message
+      // Add a small delay to ensure WebSocket is fully ready
       if (allTokenIds.length > 0) {
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
         this.client.subscribeToMarkets(allTokenIds);
         logger.info(`✅ FAST LAYER: Subscribed to ${allTokenIds.length} tokens across ${topMarkets.length} top-ranked markets via WebSocket`);
       } else {

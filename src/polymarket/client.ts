@@ -62,10 +62,18 @@ export class PolymarketClient extends EventEmitter {
         // Start PING interval to keep connection alive
         this.startPingInterval();
 
-        // Resubscribe to markets if any
-        this.subscribedMarkets.forEach(marketId => {
-          this.subscribeToMarket(marketId);
-        });
+        // Resubscribe to markets if any - use BATCH subscription to avoid flooding
+        if (this.subscribedMarkets.size > 0) {
+          const marketsArray = Array.from(this.subscribedMarkets);
+          logger.info(`Resubscribing to ${marketsArray.length} tokens in batch`);
+
+          // Send ALL subscriptions in a single message
+          const subscribeMessage = {
+            assets_ids: marketsArray,
+            type: 'market',
+          };
+          this.ws!.send(JSON.stringify(subscribeMessage));
+        }
 
         resolve();
       });

@@ -175,10 +175,10 @@ export class PolymarketClient extends EventEmitter {
       return;
     }
 
+    // Try CLOB WebSocket subscription format (asset_ids)
     const subscribeMessage = {
       type: 'subscribe',
-      markets: [marketId],
-      assets_ids: [marketId],
+      asset_ids: [marketId],
     };
 
     // Log first 3 subscriptions to see format

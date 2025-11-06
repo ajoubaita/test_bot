@@ -5,6 +5,7 @@ import { OrderExecutor } from './trading/order-executor';
 import { RiskManager } from './risk/risk-manager';
 import { LatencyMonitor } from './monitoring/latency-monitor';
 import { MarketScanner } from './polymarket/market-scanner';
+import { MarketScorer } from './polymarket/market-scorer';
 import { BotConfig } from './types';
 import { logger } from './utils/logger';
 
@@ -17,10 +18,13 @@ export class PolymarketHFTBot {
   private riskManager: RiskManager;
   private latencyMonitor: LatencyMonitor;
   private marketScanner: MarketScanner;
+  private marketScorer: MarketScorer;
   private isRunning = false;
   private detectionIntervalMs = 100; // Check for opportunities every 100ms
   private detectionTimer?: NodeJS.Timeout;
   private marketRefreshTimer?: NodeJS.Timeout;
+  private readonly topMarketsCount = 150; // Monitor top 150 markets by score
+  private readonly marketRefreshIntervalMs = 5 * 60 * 1000; // Refresh every 5 minutes
 
   constructor(config: BotConfig) {
     this.config = config;
@@ -57,6 +61,9 @@ export class PolymarketHFTBot {
 
     // Initialize market scanner with volume range $10k-$100k
     this.marketScanner = new MarketScanner(10000, 100000);
+
+    // Initialize market scorer for ranking markets
+    this.marketScorer = new MarketScorer();
 
     this.setupEventHandlers();
   }
@@ -128,11 +135,11 @@ export class PolymarketHFTBot {
         logger.info('Auto-scanning markets with volume $10k-$100k...');
         await this.discoverAndSubscribeToMarkets();
 
-        // Refresh market list every 5 minutes
+        // Refresh market list periodically
         this.marketRefreshTimer = setInterval(async () => {
-          logger.info('Refreshing market list...');
+          logger.info('🔄 HYBRID SCAN: Refreshing market rankings...');
           await this.discoverAndSubscribeToMarkets();
-        }, 5 * 60 * 1000);
+        }, this.marketRefreshIntervalMs);
       }
 
       // Start periodic opportunity detection
@@ -158,35 +165,42 @@ export class PolymarketHFTBot {
 
   private async discoverAndSubscribeToMarkets(): Promise<void> {
     try {
-      const markets = await this.marketScanner.scanAndFilterMarkets();
+      logger.info('🔍 HYBRID SCAN: Discovering and ranking all markets...');
 
-      if (markets.length === 0) {
+      // Step 1: Scan all markets matching volume criteria
+      const allMarkets = await this.marketScanner.scanAndFilterMarkets();
+
+      if (allMarkets.length === 0) {
         logger.warn('No markets found matching volume criteria ($10k-$100k)');
         return;
       }
 
-      logger.info(`Found ${markets.length} markets to monitor`, {
-        volumeRange: '$10k-$100k',
-        topMarkets: markets.slice(0, 5).map(m => ({
-          question: m.question.substring(0, 50) + '...',
-          volume: `$${Math.round(m.volume).toLocaleString()}`,
-        })),
+      logger.info(`Found ${allMarkets.length} markets matching volume criteria`);
+
+      // Step 2: Score and rank markets by opportunity potential
+      const topMarkets = this.marketScorer.selectTopMarkets(allMarkets, this.topMarketsCount);
+
+      logger.info(`🎯 FAST MONITOR: Selected top ${topMarkets.length} markets for high-frequency monitoring`, {
+        strategy: 'hybrid-approach',
+        scanInterval: `${this.marketRefreshIntervalMs / 1000}s`,
+        detectionInterval: `${this.detectionIntervalMs}ms`,
       });
 
-      // Subscribe to each market's tokens
-      for (const market of markets) {
+      // Step 3: Subscribe to top markets only
+      let subscribedCount = 0;
+      for (const market of topMarkets) {
         // Get token IDs for this market
         const tokens = await this.marketScanner.getMarketTokens(market.id);
 
         if (tokens.length > 0) {
           for (const tokenId of tokens) {
             this.client.subscribeToMarket(tokenId);
+            subscribedCount++;
           }
-          logger.debug(`Subscribed to market: ${market.question.substring(0, 50)}...`);
         }
       }
 
-      logger.info(`Actively monitoring ${markets.length} markets`);
+      logger.info(`✅ Actively monitoring ${subscribedCount} tokens across ${topMarkets.length} top-ranked markets`);
     } catch (error) {
       logger.error('Error discovering markets', { error });
     }

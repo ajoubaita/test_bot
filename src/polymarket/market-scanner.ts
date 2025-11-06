@@ -41,8 +41,9 @@ export class MarketScanner {
         // Create parallel requests for next N batches
         for (let i = 0; i < maxParallelRequests; i++) {
           const currentOffset = offset + (i * limit);
+          // Try to filter for non-closed markets in API query
           promises.push(
-            fetch(`${this.apiUrl}/markets?limit=${limit}&offset=${currentOffset}`)
+            fetch(`${this.apiUrl}/markets?limit=${limit}&offset=${currentOffset}&closed=false`)
               .then(res => res.ok ? res.json() : null)
               .catch(err => {
                 logger.warn(`Failed to fetch batch at offset ${currentOffset}`);

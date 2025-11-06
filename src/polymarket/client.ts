@@ -127,9 +127,10 @@ export class PolymarketClient extends EventEmitter {
   private handleWebSocketMessage(message: any): void {
     const timestamp = Date.now();
 
-    if (message.type === 'book_update') {
+    // Handle 'book' messages (full orderbook snapshot)
+    if (message.event_type === 'book') {
       const orderBook: OrderBook = {
-        marketId: message.market_id,
+        marketId: message.asset_id,  // Use asset_id (token ID)
         bids: message.bids?.map((b: any) => ({
           price: parseFloat(b.price),
           size: parseFloat(b.size),
@@ -142,14 +143,28 @@ export class PolymarketClient extends EventEmitter {
       };
 
       this.emit('orderbook', orderBook);
-    } else if (message.type === 'trade') {
-      this.emit('trade', {
-        marketId: message.market_id,
-        price: parseFloat(message.price),
-        size: parseFloat(message.size),
-        side: message.side,
-        timestamp,
-      });
+    }
+    // Handle 'price_change' messages (orderbook updates)
+    else if (message.event_type === 'price_change') {
+      // Process each price change in the message
+      for (const change of message.price_changes || []) {
+        const orderBook: OrderBook = {
+          marketId: change.asset_id,
+          // Reconstruct bids/asks from price change
+          // We'll emit this as an update
+          bids: change.side === 'BUY' ? [{
+            price: parseFloat(change.price),
+            size: parseFloat(change.size),
+          }] : [],
+          asks: change.side === 'SELL' ? [{
+            price: parseFloat(change.price),
+            size: parseFloat(change.size),
+          }] : [],
+          timestamp: parseInt(message.timestamp),
+        };
+
+        this.emit('orderbook', orderBook);
+      }
     }
   }
 

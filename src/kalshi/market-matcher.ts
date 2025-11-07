@@ -74,6 +74,16 @@ export class MarketMatcher {
     kalshiMarket: KalshiMarket,
     minSimilarity: number
   ): MarketPair | null {
+    // CRITICAL: Reject matches between incompatible categories
+    // Prevents false positives like crypto vs sports
+    const pmCategory = this.inferCategory(pmMarket.question);
+    const kalshiCategory = kalshiMarket.category?.toLowerCase() || this.inferCategory(kalshiMarket.title);
+
+    if (pmCategory && kalshiCategory && pmCategory !== kalshiCategory) {
+      // Different categories = definitely not the same event
+      return null;
+    }
+
     let bestScore = 0;
     let bestReason = '';
 
@@ -271,23 +281,41 @@ export class MarketMatcher {
   private inferCategory(title: string): string | null {
     const lower = title.toLowerCase();
 
+    // Crypto: coins, tokens, airdrops, DeFi
     if (lower.includes('bitcoin') || lower.includes('btc') || lower.includes('crypto') ||
-        lower.includes('ethereum') || lower.includes('eth')) {
+        lower.includes('ethereum') || lower.includes('eth') || lower.includes('airdrop') ||
+        lower.includes('token') || lower.includes('solana') || lower.includes('defi') ||
+        lower.includes('blockchain')) {
       return 'crypto';
     }
+
+    // Sports: NFL, NBA, player names, yards, touchdowns, games
+    if (lower.includes('nfl') || lower.includes('nba') || lower.includes('mlb') ||
+        lower.includes('nhl') || lower.includes('touchdown') || lower.includes('yards') ||
+        lower.includes('points scored') || lower.includes('game') || lower.includes('win') ||
+        lower.includes('broncos') || lower.includes('chiefs') || lower.includes('lakers') ||
+        lower.includes('celtics') || lower.includes('super bowl')) {
+      return 'sports';
+    }
+
+    // Politics: elections, politicians, government
     if (lower.includes('trump') || lower.includes('biden') || lower.includes('election') ||
-        lower.includes('president')) {
+        lower.includes('president') || lower.includes('congress') || lower.includes('senate') ||
+        lower.includes('harris') || lower.includes('governor')) {
       return 'politics';
     }
-    if (lower.includes('stock') || lower.includes('market') || lower.includes('s&p') ||
-        lower.includes('dow')) {
+
+    // Finance: stocks, indices, markets, GDP
+    if (lower.includes('stock') || lower.includes('s&p') || lower.includes('dow') ||
+        lower.includes('nasdaq') || lower.includes('gdp') || lower.includes('recession') ||
+        lower.includes('fed') || lower.includes('interest rate')) {
       return 'finance';
     }
-    if (lower.includes('temperature') || lower.includes('weather') || lower.includes('climate')) {
+
+    // Weather: temperature, precipitation, climate
+    if (lower.includes('temperature') || lower.includes('weather') || lower.includes('climate') ||
+        lower.includes('snow') || lower.includes('rain') || lower.includes('hurricane')) {
       return 'weather';
-    }
-    if (lower.includes('sports') || lower.includes('nfl') || lower.includes('nba')) {
-      return 'sports';
     }
 
     return null;

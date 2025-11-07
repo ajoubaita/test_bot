@@ -98,11 +98,33 @@ This update implements **MANDATORY entity and date validation** to eliminate fal
 }
 ```
 
-## Match Quality Thresholds
+## Strict Matching Rules
 
-- ✅ **HIGH** (≥0.85): Safe to trade (with manual verification)
-- ⚠️ **MEDIUM** (0.70-0.84): Review carefully before trading
-- ❌ **LOW** (<0.70): Almost certainly FALSE POSITIVES
+### Mandatory Validation (MUST PASS)
+1. **Category Match**: Markets must be in same category (crypto, politics, sports, etc.)
+2. **Entity Match**: If named entities exist (Biden, Tesla, Lakers), **≥80% must match**
+3. **Date Match**: If dates exist, **≥80% must match exactly** (same year, month, day)
+4. **Price Match** (crypto/finance only): If price targets exist ($100k, $50), **≥1 must match**
+
+### Similarity Scoring (AFTER mandatory checks pass)
+- ✅ **HIGH** (≥0.85): Safe to trade after manual verification
+- ⚠️ **MEDIUM** (0.80-0.84): Review carefully - may still be risky
+- ❌ **LOW** (<0.80): **Rejected by new threshold** - won't appear in logs
+
+### Example: Why Biden/Soccer Match Now FAILS
+
+**Before (0.60 similarity - MATCHED):**
+- Different categories: ✗ Politics vs Soccer
+- Different entities: ✗ Biden/Nelson vs Telstar/1963
+- Different dates: ✗ "November 7" (no year) vs "2025-11-07"
+- Result: Still matched due to loose scoring
+
+**After (NEW STRICT RULES - REJECTED):**
+1. ❌ Entity check FAILS: 0% overlap (Biden ≠ Telstar, Nelson ≠ 1963)
+2. ❌ Date check FAILS: Partial overlap but incomplete
+3. ✋ **Rejected before similarity scoring even runs**
+
+See `STRICT_MATCHING_RULES.md` for detailed validation examples.
 
 ## Testing
 

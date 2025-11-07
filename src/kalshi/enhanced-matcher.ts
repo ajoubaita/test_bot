@@ -89,15 +89,30 @@ export class EnhancedMarketMatcher {
 
   /**
    * Extract known entities (people, teams, companies, coins)
+   * ENHANCED: Also extracts capitalized proper nouns (likely names)
    */
   private extractEntities(text: string): Set<string> {
     const entities = new Set<string>();
     const lower = text.toLowerCase();
 
-    // Politicians
-    const politicians = ['trump', 'biden', 'harris', 'desantis', 'newsom', 'obama', 'clinton', 'pence'];
+    // Extract capitalized words (likely proper nouns = names, places, teams)
+    // Pattern: Match words that start with capital letter and are 2+ chars
+    const capitalizedWords = text.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*/g) || [];
+    capitalizedWords.forEach(word => {
+      // Normalize and add (skip common words like "Will", "The", etc.)
+      const normalized = word.toLowerCase();
+      const skipWords = new Set(['will', 'would', 'should', 'can', 'what', 'when', 'where', 'who', 'why', 'how', 'the', 'this', 'that', 'these', 'those', 'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december']);
+      if (!skipWords.has(normalized) && normalized.length >= 3) {
+        entities.add(`name:${normalized}`);
+      }
+    });
+
+    // Politicians (expanded list)
+    const politicians = ['trump', 'biden', 'harris', 'desantis', 'newsom', 'obama', 'clinton', 'pence',
+                         'warren', 'sanders', 'cruz', 'rubio', 'mcconnell', 'pelosi', 'schumer',
+                         'haley', 'ramaswamy', 'christie', 'scott', 'vivek'];
     politicians.forEach(p => {
-      if (lower.includes(p)) entities.add(p);
+      if (lower.includes(p)) entities.add(`politician:${p}`);
     });
 
     // Cryptocurrencies (with normalization)
@@ -110,26 +125,43 @@ export class EnhancedMarketMatcher {
       'sol': 'sol',
       'cardano': 'ada',
       'ada': 'ada',
+      'polygon': 'matic',
+      'matic': 'matic',
+      'avalanche': 'avax',
+      'avax': 'avax',
     };
     for (const [name, symbol] of Object.entries(cryptoMap)) {
-      if (lower.includes(name)) entities.add(symbol);
+      if (lower.includes(name)) entities.add(`crypto:${symbol}`);
     }
 
     // NFL teams (city or nickname)
     const nflTeams = ['chiefs', 'broncos', 'raiders', 'chargers', 'patriots', 'bills',
-                      '49ers', 'rams', 'seahawks', 'cowboys', 'eagles', 'packers'];
+                      '49ers', 'rams', 'seahawks', 'cowboys', 'eagles', 'packers',
+                      'steelers', 'ravens', 'bengals', 'browns', 'colts', 'titans',
+                      'jaguars', 'texans', 'dolphins', 'jets', 'panthers', 'saints',
+                      'falcons', 'buccaneers', 'cardinals', 'giants', 'commanders'];
     nflTeams.forEach(team => {
       if (lower.includes(team)) entities.add(`nfl:${team}`);
     });
 
     // NBA teams
-    const nbaTeams = ['lakers', 'celtics', 'warriors', 'heat', 'knicks', 'nets', 'bulls'];
+    const nbaTeams = ['lakers', 'celtics', 'warriors', 'heat', 'knicks', 'nets', 'bulls',
+                      'nuggets', 'suns', 'bucks', 'clippers', 'mavericks', 'rockets'];
     nbaTeams.forEach(team => {
       if (lower.includes(team)) entities.add(`nba:${team}`);
     });
 
+    // Soccer teams (expanded)
+    const soccerTeams = ['barcelona', 'real madrid', 'manchester', 'liverpool', 'bayern',
+                         'juventus', 'psg', 'chelsea', 'arsenal', 'milan', 'inter',
+                         'atletico', 'dortmund', 'ajax', 'benfica', 'porto'];
+    soccerTeams.forEach(team => {
+      if (lower.includes(team)) entities.add(`soccer:${team}`);
+    });
+
     // Companies/Stocks
-    const companies = ['apple', 'google', 'amazon', 'tesla', 'microsoft', 'meta', 'nvidia'];
+    const companies = ['apple', 'google', 'amazon', 'tesla', 'microsoft', 'meta', 'nvidia',
+                       'netflix', 'disney', 'walmart', 'jpmorgan', 'visa', 'mastercard'];
     companies.forEach(co => {
       if (lower.includes(co)) entities.add(`stock:${co}`);
     });
@@ -137,9 +169,12 @@ export class EnhancedMarketMatcher {
     // Events
     if (lower.includes('super bowl')) entities.add('event:superbowl');
     if (lower.includes('world series')) entities.add('event:worldseries');
+    if (lower.includes('world cup')) entities.add('event:worldcup');
     if (lower.includes('nba finals')) entities.add('event:nbafinals');
+    if (lower.includes('olympics')) entities.add('event:olympics');
     if (lower.includes('election')) entities.add('event:election');
     if (lower.includes('airdrop')) entities.add('event:airdrop');
+    if (lower.includes('halving')) entities.add('event:halving');
 
     return entities;
   }
@@ -166,66 +201,140 @@ export class EnhancedMarketMatcher {
   }
 
   /**
-   * Smart matching with detailed entity and numeric extraction
+   * STRICT matching with mandatory entity and date validation
+   * PHILOSOPHY: Better to miss true matches than to allow false positives
    */
   match(pmMarket: MarketWithVolume, kalshiMarket: KalshiMarket, minSimilarity: number): MarketPair | null {
-    // Category filter (CRITICAL - prevents crypto/sports mixing)
-    const pmCategory = this.inferCategory(pmMarket.question);
-    const kalshiCategory = kalshiMarket.category?.toLowerCase() || this.inferCategory(kalshiMarket.title);
+    const pmText = pmMarket.question;
+    const kalshiText = kalshiMarket.title;
+
+    // MANDATORY CHECK 1: Category must match
+    const pmCategory = this.inferCategory(pmText);
+    const kalshiCategory = kalshiMarket.category?.toLowerCase() || this.inferCategory(kalshiText);
 
     if (pmCategory && kalshiCategory && pmCategory !== kalshiCategory) {
       return null; // Different categories = NOT the same event
     }
 
-    const pmText = pmMarket.question;
-    const kalshiText = kalshiMarket.title;
-
-    let score = 0;
-    let reason = '';
-
-    // 1. Entity Matching (highest weight)
+    // Extract all entities and dates upfront
     const pmEntities = this.extractEntities(pmText);
     const kalshiEntities = this.extractEntities(kalshiText);
-    const entityIntersection = new Set([...pmEntities].filter(e => kalshiEntities.has(e)));
+    const pmDates = this.extractDates(pmText);
+    const kalshiDates = this.extractDates(kalshiText);
 
-    if (pmEntities.size > 0 && kalshiEntities.size > 0) {
-      const entitySimilarity = entityIntersection.size / Math.max(pmEntities.size, kalshiEntities.size);
-      if (entitySimilarity >= 0.5) {
-        score = Math.max(score, 0.6 + (entitySimilarity * 0.3));
-        reason = 'entity-match';
+    // MANDATORY CHECK 2: If entities exist, they MUST overlap significantly
+    // Rule: If either market has named entities, at least 80% must match
+    if (pmEntities.size > 0 || kalshiEntities.size > 0) {
+      const entityIntersection = new Set([...pmEntities].filter(e => kalshiEntities.has(e)));
+      const minRequired = Math.ceil(Math.max(pmEntities.size, kalshiEntities.size) * 0.8);
+
+      if (entityIntersection.size < minRequired) {
+        // Not enough entity overlap - reject
+        logger.debug('Rejected: Insufficient entity overlap', {
+          pmMarket: pmText.substring(0, 60),
+          kalshiMarket: kalshiText.substring(0, 60),
+          pmEntities: Array.from(pmEntities),
+          kalshiEntities: Array.from(kalshiEntities),
+          intersection: Array.from(entityIntersection),
+          required: minRequired,
+          actual: entityIntersection.size,
+        });
+        return null;
       }
     }
 
-    // 2. Date Matching (very high confidence)
-    const pmDates = this.extractDates(pmText);
-    const kalshiDates = this.extractDates(kalshiText);
-    const dateIntersection = new Set([...pmDates].filter(d => kalshiDates.has(d)));
+    // MANDATORY CHECK 3: If dates exist, they MUST match exactly
+    // Rule: ALL dates in both markets must match exactly (including year)
+    if (pmDates.size > 0 || kalshiDates.size > 0) {
+      const dateIntersection = new Set([...pmDates].filter(d => kalshiDates.has(d)));
 
-    if (dateIntersection.size > 0 && pmDates.size > 0 && kalshiDates.size > 0) {
-      // Same date = high confidence same event
-      score = Math.max(score, 0.8);
+      // Both markets must have dates, and they must all match
+      if (pmDates.size === 0 || kalshiDates.size === 0) {
+        // One has dates, the other doesn't - probably different events
+        logger.debug('Rejected: Date mismatch (one has dates, other does not)', {
+          pmMarket: pmText.substring(0, 60),
+          kalshiMarket: kalshiText.substring(0, 60),
+          pmDates: Array.from(pmDates),
+          kalshiDates: Array.from(kalshiDates),
+        });
+        return null;
+      }
+
+      // Require that at least 80% of dates match
+      const minDateOverlap = Math.ceil(Math.max(pmDates.size, kalshiDates.size) * 0.8);
+      if (dateIntersection.size < minDateOverlap) {
+        logger.debug('Rejected: Dates do not match', {
+          pmMarket: pmText.substring(0, 60),
+          kalshiMarket: kalshiText.substring(0, 60),
+          pmDates: Array.from(pmDates),
+          kalshiDates: Array.from(kalshiDates),
+          intersection: Array.from(dateIntersection),
+          required: minDateOverlap,
+          actual: dateIntersection.size,
+        });
+        return null;
+      }
+    }
+
+    // MANDATORY CHECK 4: For crypto/finance markets, price targets must match
+    if (pmCategory === 'crypto' || pmCategory === 'finance') {
+      const pmPrices = this.extractPriceTargets(pmText);
+      const kalshiPrices = this.extractPriceTargets(kalshiText);
+
+      if (pmPrices.size > 0 || kalshiPrices.size > 0) {
+        const priceIntersection = new Set([...pmPrices].filter(p => kalshiPrices.has(p)));
+
+        // If both have price targets, at least 1 must match
+        if (pmPrices.size > 0 && kalshiPrices.size > 0 && priceIntersection.size === 0) {
+          logger.debug('Rejected: Price targets do not match', {
+            pmMarket: pmText.substring(0, 60),
+            kalshiMarket: kalshiText.substring(0, 60),
+            pmPrices: Array.from(pmPrices),
+            kalshiPrices: Array.from(kalshiPrices),
+          });
+          return null;
+        }
+      }
+    }
+
+    // Now calculate similarity score (only if mandatory checks passed)
+    let score = 0;
+    let reason = '';
+
+    // 1. Entity Matching (highest weight) - now guaranteed to have good overlap
+    const entityIntersection = new Set([...pmEntities].filter(e => kalshiEntities.has(e)));
+    if (pmEntities.size > 0 && kalshiEntities.size > 0) {
+      const entitySimilarity = entityIntersection.size / Math.max(pmEntities.size, kalshiEntities.size);
+      score = Math.max(score, 0.7 + (entitySimilarity * 0.25)); // Higher base score since we know it's good
+      reason = 'entity-match';
+    }
+
+    // 2. Date Matching - now guaranteed to match
+    const dateIntersection = new Set([...pmDates].filter(d => kalshiDates.has(d)));
+    if (dateIntersection.size > 0) {
+      score = Math.max(score, 0.85); // Very high confidence since dates match
       reason = reason ? `${reason}+date` : 'date-match';
     }
 
-    // 3. Price Target Matching (for financial/crypto markets)
+    // 3. Price Target Matching
     if (pmCategory === 'crypto' || pmCategory === 'finance') {
       const pmPrices = this.extractPriceTargets(pmText);
       const kalshiPrices = this.extractPriceTargets(kalshiText);
       const priceIntersection = new Set([...pmPrices].filter(p => kalshiPrices.has(p)));
 
-      if (priceIntersection.size > 0 && pmPrices.size > 0 && kalshiPrices.size > 0) {
-        score = Math.max(score, 0.75);
+      if (priceIntersection.size > 0) {
+        score = Math.max(score, 0.85);
         reason = reason ? `${reason}+price` : 'price-target-match';
       }
     }
 
-    // 4. Numeric Matching (dates, percentages, thresholds)
+    // 4. Numeric Matching (other numbers)
     const pmNumbers = this.extractNumbers(pmText);
     const kalshiNumbers = this.extractNumbers(kalshiText);
     const numberIntersection = new Set([...pmNumbers].filter(n => kalshiNumbers.has(n)));
 
-    if (numberIntersection.size >= 2 && pmNumbers.size > 0 && kalshiNumbers.size > 0) {
-      score = Math.max(score, 0.7);
+    if (numberIntersection.size >= 2) {
+      score = Math.max(score, 0.75);
       reason = reason ? `${reason}+numeric` : 'multi-numeric-match';
     }
 
@@ -237,7 +346,8 @@ export class EnhancedMarketMatcher {
 
     if (keywordUnion.size > 0) {
       const jaccardScore = keywordIntersection.size / keywordUnion.size;
-      if (jaccardScore > score) {
+      // Only update score if Jaccard is very high (since it's a fallback)
+      if (jaccardScore >= 0.6 && jaccardScore > score) {
         score = jaccardScore;
         reason = 'keyword-jaccard';
       }
@@ -245,7 +355,7 @@ export class EnhancedMarketMatcher {
 
     // Accept match if above threshold
     if (score >= minSimilarity) {
-      logger.debug(`Match found: ${reason}`, {
+      logger.debug(`✅ STRICT match found: ${reason}`, {
         pmMarket: pmText.substring(0, 60),
         kalshiMarket: kalshiText.substring(0, 60),
         score: score.toFixed(2),

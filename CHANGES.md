@@ -1,8 +1,10 @@
-# Bot Return Clarity & Matching Improvements
+# Bot Return Clarity & STRICT Matching Improvements
 
 ## Summary
 
-This update fixes critical false positive matching bugs and adds comprehensive return tracking to make it crystal clear whether opportunities are profitable.
+This update implements **MANDATORY entity and date validation** to eliminate false positive matches, plus comprehensive return tracking to make it crystal clear whether opportunities are profitable.
+
+**PHILOSOPHY:** Better to miss true matches than to allow false positives. Trading false positives = losing money.
 
 ## Problems Fixed
 
@@ -14,9 +16,16 @@ This update fixes critical false positive matching bugs and adds comprehensive r
 
 **Root Cause**: Category detection regex pattern `win on 20` was matching dates like "on November 7, 2025", causing political events to be categorized as soccer.
 
-**Fix**: Removed overly broad pattern and added more specific soccer team patterns.
+**Fix**:
+1. Removed overly broad pattern and added more specific soccer team patterns
+2. Added **MANDATORY validation rules**:
+   - If entities (names) exist, **80% must match exactly**
+   - If dates exist, **80% must match exactly** (including year)
+   - If price targets exist (crypto/finance), **at least 1 must match**
+3. Enhanced entity extraction to catch capitalized proper nouns (Biden, Nelson, Telstar, etc.)
+4. Raised minimum similarity from 0.70 → 0.80
 
-**File**: `src/kalshi/enhanced-matcher.ts:310-319`
+**Files**: `src/kalshi/enhanced-matcher.ts:90-341`, `src/bot.ts:90-97`
 
 ### 2. Unclear Return Values 📊
 

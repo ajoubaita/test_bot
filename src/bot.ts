@@ -87,13 +87,13 @@ export class PolymarketHFTBot {
     // Initialize Kalshi client for cross-market arbitrage
     this.kalshiClient = new KalshiClient(config.kalshiApiKey, config.kalshiPrivateKey);
 
-    // Initialize cross-market arbitrage detector with CONSERVATIVE matching
-    // Higher threshold prevents false positives (e.g., crypto vs sports)
+    // Initialize cross-market arbitrage detector with STRICT matching
+    // High threshold + mandatory entity/date validation prevents false positives
     this.crossMarketDetector = new CrossMarketArbitrageDetector(
       this.kalshiClient,
       this.orderBookManager,
       0.03, // 3 cent minimum price difference
-      0.7   // 70% title similarity minimum (conservative to avoid false matches)
+      0.80  // 80% similarity minimum + MANDATORY entity/date checks (STRICT to eliminate false matches)
     );
 
     this.setupEventHandlers();

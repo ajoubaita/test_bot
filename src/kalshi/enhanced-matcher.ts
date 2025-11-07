@@ -307,7 +307,14 @@ export class EnhancedMarketMatcher {
     }
 
     // Soccer/Football - teams, leagues, FIFA (CRITICAL: separate from other sports!)
-    if (lower.match(/\b(soccer|football|fifa|uefa|premier league|la liga|bundesliga|serie a|başakşehir|barcelona|real madrid|manchester|liverpool|bayern|juventus|psg|fc |win on 20)\b/)) {
+    // FIXED: Removed "win on 20" pattern that was matching dates like "on November 7, 2025"
+    if (lower.match(/\b(soccer|football|fifa|uefa|premier league|la liga|bundesliga|serie a|başakşehir|barcelona|real madrid|manchester|liverpool|bayern|juventus|psg)\b/)) {
+      return 'soccer';
+    }
+
+    // Match soccer team patterns more carefully (e.g., "FC Twente", "Team Name win")
+    // Only match if it includes team indicators like "fc ", "united", etc.
+    if (lower.match(/\b(fc |ac |sc |united|city fc|hotspur)\s+\w+\s+(win|lose|draw)/)) {
       return 'soccer';
     }
 

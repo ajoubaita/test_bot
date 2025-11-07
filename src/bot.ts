@@ -5,6 +5,7 @@ import { CrossMarketArbitrageDetector } from './strategies/cross-market-arbitrag
 import { OrderExecutor } from './trading/order-executor';
 import { RiskManager } from './risk/risk-manager';
 import { LatencyMonitor } from './monitoring/latency-monitor';
+import { OpportunityTracker } from './monitoring/opportunity-tracker';
 import { MarketScanner } from './polymarket/market-scanner';
 import { MarketScorer } from './polymarket/market-scorer';
 import { ComprehensiveScanner } from './polymarket/comprehensive-scanner';
@@ -22,6 +23,7 @@ export class PolymarketHFTBot {
   private orderExecutor: OrderExecutor;
   private riskManager: RiskManager;
   private latencyMonitor: LatencyMonitor;
+  private opportunityTracker: OpportunityTracker;
   private marketScanner: MarketScanner;
   private marketScorer: MarketScorer;
   private comprehensiveScanner: ComprehensiveScanner;
@@ -45,6 +47,9 @@ export class PolymarketHFTBot {
       config.latencyWarningMs,
       config.latencyAlertMs
     );
+
+    // Initialize opportunity tracker
+    this.opportunityTracker = new OpportunityTracker();
 
     // Initialize Polymarket client
     this.client = new PolymarketClient({
@@ -392,19 +397,62 @@ export class PolymarketHFTBot {
   }
 
   private async handleCrossMarketOpportunity(opportunity: any): Promise<void> {
+    // Calculate buy and sell prices for clarity
+    const buyPlatform = opportunity.direction === 'buy-kalshi-sell-poly' ? 'Kalshi' : 'Polymarket';
+    const sellPlatform = opportunity.direction === 'buy-kalshi-sell-poly' ? 'Polymarket' : 'Kalshi';
+    const buyPrice = opportunity.direction === 'buy-kalshi-sell-poly' ? opportunity.kalshiPrice : opportunity.polymarketPrice;
+    const sellPrice = opportunity.direction === 'buy-kalshi-sell-poly' ? opportunity.polymarketPrice : opportunity.kalshiPrice;
+
+    // Determine match quality
+    const matchQuality = opportunity.similarityScore >= 0.85 ? 'HIGH' :
+                        opportunity.similarityScore >= 0.70 ? 'MEDIUM' : 'LOW';
+
+    const matchQualityDisplay = opportunity.similarityScore >= 0.85 ? '✅ HIGH' :
+                               opportunity.similarityScore >= 0.70 ? '⚠️ MEDIUM' : '❌ LOW';
+
+    // Track this opportunity
+    this.opportunityTracker.trackOpportunity({
+      timestamp: Date.now(),
+      type: 'cross-market',
+      matchQuality: matchQuality as 'HIGH' | 'MEDIUM' | 'LOW',
+      similarityScore: opportunity.similarityScore,
+      platform1: 'Polymarket',
+      platform2: 'Kalshi',
+      market1: opportunity.polymarketQuestion,
+      market2: opportunity.kalshiTitle,
+      buyPlatform,
+      sellPlatform,
+      buyPrice,
+      sellPrice,
+      spread: opportunity.priceDifference,
+      expectedGrossProfit: opportunity.expectedProfit,
+      expectedGrossReturn: opportunity.profitPercentage,
+      executed: false,
+    });
+
     // Check dry run mode
     if (this.config.dryRun) {
       logger.info('[DRY RUN] 🎯 CROSS-MARKET ARBITRAGE DETECTED', {
         type: opportunity.type,
-        direction: opportunity.direction,
-        polymarket: opportunity.polymarketQuestion.substring(0, 60),
-        kalshi: opportunity.kalshiTitle.substring(0, 60),
-        polymarketPrice: opportunity.polymarketPrice.toFixed(3),
-        kalshiPrice: opportunity.kalshiPrice.toFixed(3),
-        priceDifference: opportunity.priceDifference.toFixed(3),
-        expectedProfit: `$${opportunity.expectedProfit.toFixed(2)}`,
-        profitPercentage: `${(opportunity.profitPercentage * 100).toFixed(2)}%`,
-        similarity: opportunity.similarityScore.toFixed(2),
+
+        // Market matching info
+        matchQuality: `${matchQualityDisplay} (${opportunity.similarityScore.toFixed(2)})`,
+        polymarketMarket: opportunity.polymarketQuestion.substring(0, 80),
+        kalshiMarket: opportunity.kalshiTitle.substring(0, 80),
+
+        // Trading strategy
+        strategy: `BUY on ${buyPlatform} @ $${buyPrice.toFixed(3)} → SELL on ${sellPlatform} @ $${sellPrice.toFixed(3)}`,
+
+        // Return calculation (BEFORE fees)
+        grossSpread: opportunity.priceDifference.toFixed(3),
+        expectedGrossProfit: `$${opportunity.expectedProfit.toFixed(2)}`,
+        grossReturn: `${(opportunity.profitPercentage * 100).toFixed(2)}%`,
+
+        // Important warnings
+        warning: opportunity.similarityScore < 0.85 ?
+          '⚠️ Match quality is not HIGH - verify markets are identical before trading!' :
+          'Match quality is good, but always verify before live trading',
+        note: 'Returns shown are GROSS (before exchange fees, gas, slippage)',
       });
       return;
     }
@@ -454,6 +502,14 @@ export class PolymarketHFTBot {
     // Cross-market stats
     const crossMarketStats = this.crossMarketDetector.getStats();
     logger.info('Cross-Market Arbitrage Stats:', crossMarketStats);
+
+    // Opportunity tracking stats
+    const trackingStats = this.opportunityTracker.getStats();
+    logger.info('Opportunity Tracking Stats:', trackingStats);
+    const returnAccuracy = this.opportunityTracker.analyzeReturnAccuracy();
+    if (returnAccuracy.sampleSize > 0) {
+      logger.info('Return Accuracy:', returnAccuracy);
+    }
 
     // Execution stats
     logger.info('Active Orders:', {

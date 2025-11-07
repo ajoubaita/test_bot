@@ -2,7 +2,7 @@ import { logger } from '../utils/logger';
 import { EventEmitter } from 'events';
 import { KalshiClient, KalshiOrderBook } from '../kalshi/client';
 import { OrderBookManager } from '../trading/orderbook-manager';
-import { MarketMatcher, MarketPair } from '../kalshi/market-matcher';
+import { EnhancedMarketMatcher, MarketPair } from '../kalshi/enhanced-matcher';
 
 export interface CrossMarketOpportunity {
   type: 'cross-market';
@@ -23,7 +23,7 @@ export interface CrossMarketOpportunity {
 export class CrossMarketArbitrageDetector extends EventEmitter {
   private kalshiClient: KalshiClient;
   private polymarketOrderBooks: OrderBookManager;
-  private marketMatcher: MarketMatcher;
+  private marketMatcher: EnhancedMarketMatcher;
   private marketPairs: MarketPair[] = [];
   private minPriceDifference: number;
   private minSimilarity: number;
@@ -32,18 +32,19 @@ export class CrossMarketArbitrageDetector extends EventEmitter {
     kalshiClient: KalshiClient,
     polymarketOrderBooks: OrderBookManager,
     minPriceDifference: number = 0.03, // 3 cent minimum price difference
-    minSimilarity: number = 0.75 // 75% title similarity minimum
+    minSimilarity: number = 0.7 // 70% similarity (conservative to prevent false positives)
   ) {
     super();
     this.kalshiClient = kalshiClient;
     this.polymarketOrderBooks = polymarketOrderBooks;
-    this.marketMatcher = new MarketMatcher();
+    this.marketMatcher = new EnhancedMarketMatcher();
     this.minPriceDifference = minPriceDifference;
     this.minSimilarity = minSimilarity;
 
-    logger.info('Cross-market arbitrage detector initialized', {
+    logger.info('🎯 Cross-market arbitrage detector initialized with ENHANCED matching', {
       minPriceDifference,
       minSimilarity,
+      features: 'entity recognition, date normalization, price targets, numeric matching',
     });
   }
 

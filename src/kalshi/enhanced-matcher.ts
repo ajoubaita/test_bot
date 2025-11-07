@@ -296,28 +296,38 @@ export class EnhancedMarketMatcher {
   private inferCategory(title: string): string | null {
     const lower = title.toLowerCase();
 
-    // Crypto
-    if (lower.match(/\b(bitcoin|btc|ethereum|eth|crypto|airdrop|token|solana|defi|blockchain|nft)\b/)) {
+    // Crypto - coins, tokens, airdrops, DeFi, NFTs
+    if (lower.match(/\b(bitcoin|btc|ethereum|eth|crypto|airdrop|token|solana|defi|blockchain|nft|megaeth|cardano|ada|polygon|matic|avalanche|avax)\b/)) {
       return 'crypto';
     }
 
-    // Sports
-    if (lower.match(/\b(nfl|nba|mlb|nhl|touchdown|yards|points scored|game|super bowl|playoffs|championship)\b/)) {
-      return 'sports';
+    // Esports - gaming, tournaments, teams (CRITICAL: separate from regular sports!)
+    if (lower.match(/\b(esports|csgo|cs:go|dota|league of legends|lol|valorant|iem|esl|furia|navi|faze|g2|fnatic|team liquid|overwatch|fortnite|apex legends)\b/)) {
+      return 'esports';
     }
 
-    // Politics
-    if (lower.match(/\b(trump|biden|harris|election|president|congress|senate|governor)\b/)) {
+    // Soccer/Football - teams, leagues, FIFA (CRITICAL: separate from other sports!)
+    if (lower.match(/\b(soccer|football|fifa|uefa|premier league|la liga|bundesliga|serie a|başakşehir|barcelona|real madrid|manchester|liverpool|bayern|juventus|psg|fc |win on 20)\b/)) {
+      return 'soccer';
+    }
+
+    // American Sports - NFL, NBA, MLB, NHL
+    if (lower.match(/\b(nfl|nba|mlb|nhl|touchdown|yards|points scored|super bowl|playoffs|broncos|chiefs|lakers|celtics|yankees|red sox)\b/)) {
+      return 'sports-us';
+    }
+
+    // Politics - elections, politicians, government
+    if (lower.match(/\b(trump|biden|harris|election|president|congress|senate|governor|republican|democrat)\b/)) {
       return 'politics';
     }
 
-    // Finance
-    if (lower.match(/\b(stock|s&p|dow|nasdaq|gdp|recession|fed|interest rate|market index)\b/)) {
+    // Finance - stocks, indices, markets, economy
+    if (lower.match(/\b(stock|s&p|dow|nasdaq|gdp|recession|fed|interest rate|market index|treasury|inflation)\b/)) {
       return 'finance';
     }
 
-    // Weather
-    if (lower.match(/\b(temperature|weather|climate|snow|rain|hurricane|forecast)\b/)) {
+    // Weather - temperature, precipitation, climate
+    if (lower.match(/\b(temperature|weather|climate|snow|rain|hurricane|forecast|celsius|fahrenheit)\b/)) {
       return 'weather';
     }
 

@@ -50,3 +50,4 @@ temp/
 *.pem
 credentials.json
 KalshiPK.txt
+test-kalshi.js

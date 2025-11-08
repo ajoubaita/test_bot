@@ -6,6 +6,7 @@ import { OrderExecutor } from './trading/order-executor';
 import { RiskManager } from './risk/risk-manager';
 import { LatencyMonitor } from './monitoring/latency-monitor';
 import { OpportunityTracker } from './monitoring/opportunity-tracker';
+import { PaperTrader } from './trading/paper-trader';
 import { MarketScanner } from './polymarket/market-scanner';
 import { MarketScorer } from './polymarket/market-scorer';
 import { ComprehensiveScanner } from './polymarket/comprehensive-scanner';
@@ -24,6 +25,7 @@ export class PolymarketHFTBot {
   private riskManager: RiskManager;
   private latencyMonitor: LatencyMonitor;
   private opportunityTracker: OpportunityTracker;
+  private paperTrader: PaperTrader;
   private marketScanner: MarketScanner;
   private marketScorer: MarketScorer;
   private comprehensiveScanner: ComprehensiveScanner;
@@ -50,6 +52,9 @@ export class PolymarketHFTBot {
 
     // Initialize opportunity tracker
     this.opportunityTracker = new OpportunityTracker();
+
+    // Initialize paper trader with $10k virtual capital
+    this.paperTrader = new PaperTrader(10000, 0.1, 500);
 
     // Initialize Polymarket client
     this.client = new PolymarketClient({
@@ -454,6 +459,17 @@ export class PolymarketHFTBot {
           'Match quality is good, but always verify before live trading',
         note: 'Returns shown are GROSS (before exchange fees, gas, slippage)',
       });
+
+      // Execute paper trade (only for HIGH quality matches to avoid false positives)
+      if (matchQuality === 'HIGH') {
+        this.paperTrader.executeCrossMarketTrade(opportunity);
+      } else {
+        logger.debug('Skipping paper trade for non-HIGH quality match', {
+          matchQuality,
+          similarityScore: opportunity.similarityScore,
+        });
+      }
+
       return;
     }
 
@@ -511,6 +527,17 @@ export class PolymarketHFTBot {
       logger.info('Return Accuracy:', returnAccuracy);
     }
 
+    // Paper trading stats
+    const paperPortfolio = this.paperTrader.getPortfolio();
+    logger.info('💰 Paper Trading Portfolio:', {
+      capital: `$${paperPortfolio.currentCapital.toFixed(2)}`,
+      pnl: `$${paperPortfolio.totalPnL.toFixed(2)}`,
+      return: `${(paperPortfolio.totalReturn * 100).toFixed(2)}%`,
+      openPositions: paperPortfolio.openPositions,
+      closedPositions: paperPortfolio.closedPositions,
+      winRate: `${(paperPortfolio.winRate * 100).toFixed(2)}%`,
+    });
+
     // Execution stats
     logger.info('Active Orders:', {
       count: this.orderExecutor.getActiveOrders().length,
@@ -548,6 +575,9 @@ export class PolymarketHFTBot {
     // Stop comprehensive scanner
     this.comprehensiveScanner.stopScanning();
 
+    // Stop paper trader auto-close
+    this.paperTrader.stopAutoClose();
+
     // Cancel all active orders
     await this.orderExecutor.cancelAllOrders();
 
@@ -560,6 +590,9 @@ export class PolymarketHFTBot {
 
     // Print final stats
     this.printStats();
+
+    // Print paper trading report
+    logger.info('\n' + this.paperTrader.generateReport());
   }
 
   getStatus() {

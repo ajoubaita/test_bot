@@ -82,6 +82,70 @@ grep "CROSS-MARKET ARBITRAGE DETECTED" "$LOG_FILE" | tail -5 | while IFS= read -
 done
 
 echo ""
+echo "=== PAPER TRADING PORTFOLIO ==="
+if [ -f logs/paper-portfolio.jsonl ]; then
+    # Get the latest portfolio snapshot
+    LATEST_PORTFOLIO=$(tail -1 logs/paper-portfolio.jsonl)
+
+    INITIAL_CAPITAL=$(echo "$LATEST_PORTFOLIO" | grep -o '"initialCapital":[0-9.]*' | cut -d: -f2)
+    CURRENT_CAPITAL=$(echo "$LATEST_PORTFOLIO" | grep -o '"currentCapital":[0-9.]*' | cut -d: -f2)
+    TOTAL_PNL=$(echo "$LATEST_PORTFOLIO" | grep -o '"totalPnL":-\?[0-9.]*' | cut -d: -f2)
+    TOTAL_RETURN=$(echo "$LATEST_PORTFOLIO" | grep -o '"totalReturn":-\?[0-9.]*' | cut -d: -f2)
+    OPEN_POSITIONS=$(echo "$LATEST_PORTFOLIO" | grep -o '"openPositions":[0-9]*' | cut -d: -f2)
+    CLOSED_POSITIONS=$(echo "$LATEST_PORTFOLIO" | grep -o '"closedPositions":[0-9]*' | cut -d: -f2)
+    WIN_RATE=$(echo "$LATEST_PORTFOLIO" | grep -o '"winRate":[0-9.]*' | cut -d: -f2)
+
+    # Calculate return percentage
+    RETURN_PCT=$(echo "$TOTAL_RETURN" | awk '{printf "%.2f%%", $1*100}')
+
+    echo "💰 Portfolio Summary:"
+    echo "   Initial Capital: \$$INITIAL_CAPITAL"
+    echo "   Current Capital: \$$CURRENT_CAPITAL"
+    echo "   Total P&L: \$$TOTAL_PNL ($RETURN_PCT)"
+    echo "   Open Positions: $OPEN_POSITIONS"
+    echo "   Closed Positions: $CLOSED_POSITIONS"
+
+    if [ "$CLOSED_POSITIONS" != "0" ] && [ -n "$CLOSED_POSITIONS" ]; then
+        WIN_RATE_PCT=$(echo "$WIN_RATE" | awk '{printf "%.2f%%", $1*100}')
+        echo "   Win Rate: $WIN_RATE_PCT"
+    fi
+else
+    echo "⚠️  No paper trading data found (logs/paper-portfolio.jsonl)"
+    echo "   Paper trading will start tracking trades on HIGH quality matches"
+fi
+
+echo ""
+echo "=== PAPER TRADES HISTORY ==="
+if [ -f logs/paper-trades.jsonl ]; then
+    OPEN_TRADES=$(grep -c '"action":"OPEN"' logs/paper-trades.jsonl 2>/dev/null || echo "0")
+    CLOSED_TRADES=$(grep -c '"action":"CLOSE"' logs/paper-trades.jsonl 2>/dev/null || echo "0")
+
+    echo "📊 Trade Activity:"
+    echo "   Trades Opened: $OPEN_TRADES"
+    echo "   Trades Closed: $CLOSED_TRADES"
+
+    if [ "$CLOSED_TRADES" != "0" ] && [ -n "$CLOSED_TRADES" ]; then
+        echo ""
+        echo "📝 Latest Closed Trades (Last 5):"
+        grep '"action":"CLOSE"' logs/paper-trades.jsonl | tail -5 | while IFS= read -r line; do
+            # Extract key fields
+            REALIZED_PNL=$(echo "$line" | grep -o '"realizedPnL":-\?[0-9.]*' | cut -d: -f2)
+            RETURN_PCT=$(echo "$line" | grep -o '"returnPercentage":-\?[0-9.]*' | cut -d: -f2)
+            CLOSE_REASON=$(echo "$line" | grep -o '"closeReason":"[^"]*"' | cut -d'"' -f4)
+            TIMESTAMP=$(echo "$line" | grep -o '"timestamp":"[^"]*"' | tail -1 | cut -d'"' -f4)
+
+            # Format return percentage
+            RETURN_FORMATTED=$(echo "$RETURN_PCT" | awk '{printf "%.2f%%", $1*100}')
+
+            echo "   [$TIMESTAMP] P&L: \$$REALIZED_PNL ($RETURN_FORMATTED) - $CLOSE_REASON"
+        done
+    fi
+else
+    echo "⚠️  No paper trades log found (logs/paper-trades.jsonl)"
+    echo "   Paper trades will be logged when HIGH quality opportunities are found"
+fi
+
+echo ""
 echo "=== BOT STATUS ==="
 if grep -q "Bot started" "$LOG_FILE"; then
     echo "✅ Bot has been started"
@@ -97,4 +161,5 @@ echo ""
 echo "=== IMPORTANT NOTES ==="
 echo "⚠️  Returns shown are GROSS (before fees, gas, slippage)"
 echo "⚠️  LOW quality matches are likely FALSE POSITIVES - verify manually!"
-echo "✅ Only trade HIGH quality matches with similarity >= 0.85"
+echo "✅ Only HIGH quality matches (similarity >= 0.85) are paper traded"
+echo "💡 Paper trading uses \$10k virtual capital with \$500 per trade"

@@ -168,8 +168,13 @@ export class PolymarketHFTBot {
 
       // Initialize Kalshi client and WebSocket connection (if credentials provided)
       if (this.config.kalshiApiKey && this.config.kalshiPrivateKey) {
-        await this.kalshiClient.initialize();
-        logger.info('Kalshi WebSocket initialized for real-time cross-market arbitrage');
+        try {
+          await this.kalshiClient.initialize();
+          logger.info('Kalshi WebSocket initialized for real-time cross-market arbitrage');
+        } catch (error) {
+          logger.warn('Failed to connect to Kalshi WebSocket - will use REST API fallback', { error });
+          logger.info('Cross-market arbitrage will continue using REST API only');
+        }
       } else {
         logger.warn('Kalshi WebSocket not initialized (no credentials) - will use REST API for cross-market arbitrage');
       }

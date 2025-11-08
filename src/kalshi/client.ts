@@ -63,20 +63,34 @@ export class KalshiClient extends EventEmitter {
   }
 
   /**
-   * Generate HMAC-SHA256 signature for authentication
+   * Generate RSA-PSS signature for authentication (Kalshi requires RSA-PSS, not HMAC)
    */
   private generateSignature(timestamp: string, method: string, path: string): string {
     if (!this.privateKey) {
       throw new Error('Private key required for authentication');
     }
 
-    // Message format: timestamp + method + path
-    const message = timestamp + method + path;
+    try {
+      // Message format: timestamp + method + path
+      const message = timestamp + method + path;
 
-    // Generate HMAC-SHA256 signature
-    const hmac = crypto.createHmac('sha256', this.privateKey);
-    hmac.update(message);
-    return hmac.digest('base64');
+      // Sign using RSA-PSS (NOT HMAC - Kalshi uses asymmetric signing)
+      const sign = crypto.createSign('SHA256');
+      sign.update(message);
+      sign.end();
+
+      // Use RSA-PSS padding
+      const signature = sign.sign({
+        key: this.privateKey,
+        padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+        saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST,
+      });
+
+      return signature.toString('base64');
+    } catch (error) {
+      logger.error('Error generating RSA-PSS signature', { error });
+      throw error;
+    }
   }
 
   /**

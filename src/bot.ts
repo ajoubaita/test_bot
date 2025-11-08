@@ -53,8 +53,8 @@ export class PolymarketHFTBot {
     // Initialize opportunity tracker
     this.opportunityTracker = new OpportunityTracker();
 
-    // Initialize paper trader with $10k virtual capital
-    this.paperTrader = new PaperTrader(10000, 0.1, 500);
+    // Initialize paper trader with $10k virtual capital using Kelly Criterion
+    this.paperTrader = new PaperTrader(10000, 0.1);
 
     // Initialize Polymarket client
     this.client = new PolymarketClient({

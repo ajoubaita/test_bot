@@ -62,7 +62,6 @@ export class PaperTrader {
   private readonly tradesLogPath: string;
   private readonly portfolioLogPath: string;
   private readonly maxPositionSize: number; // Max % of capital per trade
-  private readonly defaultPositionSize: number; // Default size in dollars
   private tradeCounter = 0;
 
   // Auto-close settings
@@ -72,13 +71,11 @@ export class PaperTrader {
   constructor(
     initialCapital: number = 10000,
     maxPositionSize: number = 0.1, // 10% max per trade
-    defaultPositionSize: number = 500, // $500 per trade
     logDirectory: string = 'logs'
   ) {
     this.initialCapital = initialCapital;
     this.currentCapital = initialCapital;
     this.maxPositionSize = maxPositionSize;
-    this.defaultPositionSize = defaultPositionSize;
 
     this.tradesLogPath = path.join(logDirectory, 'paper-trades.jsonl');
     this.portfolioLogPath = path.join(logDirectory, 'paper-portfolio.jsonl');
@@ -91,7 +88,8 @@ export class PaperTrader {
     logger.info('💰 Paper Trading initialized', {
       initialCapital: `$${initialCapital.toFixed(2)}`,
       maxPositionSize: `${(maxPositionSize * 100).toFixed(0)}%`,
-      defaultPositionSize: `$${defaultPositionSize}`,
+      sizing: 'Kelly Criterion (half-Kelly with confidence adjustment)',
+      minPosition: '$50',
     });
 
     // Log initial portfolio state
@@ -102,18 +100,67 @@ export class PaperTrader {
   }
 
   /**
+   * Calculate optimal position size using Kelly Criterion adapted for arbitrage
+   *
+   * For arbitrage:
+   * - Edge = spread size (priceDifference)
+   * - Confidence = similarityScore (probability markets are identical)
+   * - Risk = 1 - similarityScore (probability of false positive)
+   *
+   * Kelly fraction: f* = (Edge * Confidence) / Risk
+   * Simplified: f* = spread * similarity^2
+   *
+   * We apply a conservative multiplier (0.5 = half Kelly) to reduce risk
+   */
+  private calculateKellyPosition(
+    opportunity: CrossMarketOpportunity,
+    availableCapital: number
+  ): number {
+    // Edge from the spread
+    const edge = opportunity.priceDifference;
+
+    // Confidence that markets are identical (similarity score)
+    const confidence = opportunity.similarityScore;
+
+    // Kelly fraction = edge * confidence^2
+    // We square confidence to penalize lower quality matches more heavily
+    const kellyFraction = edge * Math.pow(confidence, 2);
+
+    // Apply conservative multiplier (half-Kelly is often recommended)
+    const conservativeMultiplier = 0.5;
+    const adjustedKelly = kellyFraction * conservativeMultiplier;
+
+    // Calculate position size
+    const kellyPosition = this.currentCapital * adjustedKelly;
+
+    return kellyPosition;
+  }
+
+  /**
    * Execute a paper trade from a cross-market opportunity
    */
   executeCrossMarketTrade(opportunity: CrossMarketOpportunity): PaperTrade | null {
-    // Calculate position size
     const availableCapital = this.currentCapital - this.allocatedCapital;
-    const maxAllowed = this.currentCapital * this.maxPositionSize;
-    const positionSize = Math.min(this.defaultPositionSize, availableCapital, maxAllowed);
 
-    if (positionSize < 100) {
-      logger.warn('Insufficient capital for paper trade', {
-        available: availableCapital,
-        required: this.defaultPositionSize,
+    // Calculate Kelly-based position size
+    const kellyPosition = this.calculateKellyPosition(opportunity, availableCapital);
+
+    // Apply constraints:
+    // 1. Kelly suggestion
+    // 2. Max position size (10% of capital)
+    // 3. Available capital
+    // 4. Minimum $50 to avoid dust trades
+    const maxAllowed = this.currentCapital * this.maxPositionSize;
+    const minPosition = 50; // Minimum $50 per trade
+
+    let positionSize = Math.min(kellyPosition, maxAllowed, availableCapital);
+
+    // Check minimum threshold
+    if (positionSize < minPosition) {
+      logger.debug('Position size below minimum threshold', {
+        kellyPosition: kellyPosition.toFixed(2),
+        minRequired: minPosition,
+        availableCapital: availableCapital.toFixed(2),
       });
       return null;
     }
@@ -174,12 +221,19 @@ export class PaperTrader {
       tradeId,
       type: 'cross-market',
       direction: opportunity.direction,
-      contracts,
-      capitalAllocated: `$${capitalAllocated.toFixed(2)}`,
-      entrySpread: opportunity.priceDifference.toFixed(3),
+      sizing: {
+        kelly: `$${kellyPosition.toFixed(2)}`,
+        actual: `$${capitalAllocated.toFixed(2)}`,
+        contracts,
+        spread: opportunity.priceDifference.toFixed(3),
+        similarity: opportunity.similarityScore.toFixed(2),
+      },
       expectedProfit: `$${(contracts * opportunity.priceDifference).toFixed(2)}`,
-      polymarket: opportunity.polymarketQuestion.substring(0, 50),
-      kalshi: opportunity.kalshiTitle.substring(0, 50),
+      expectedReturn: `${((contracts * opportunity.priceDifference / capitalAllocated) * 100).toFixed(2)}%`,
+      markets: {
+        polymarket: opportunity.polymarketQuestion.substring(0, 40),
+        kalshi: opportunity.kalshiTitle.substring(0, 40),
+      },
       portfolio: {
         allocated: `$${this.allocatedCapital.toFixed(2)}`,
         available: `$${(this.currentCapital - this.allocatedCapital).toFixed(2)}`,

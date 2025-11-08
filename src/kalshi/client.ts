@@ -2,6 +2,7 @@ import { logger } from '../utils/logger';
 import { EventEmitter } from 'events';
 import WebSocket from 'ws';
 import * as crypto from 'crypto';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 
 export interface KalshiMarket {
   ticker: string;
@@ -39,12 +40,20 @@ export class KalshiClient extends EventEmitter {
   private reconnectDelay = 1000;
   private pingInterval: NodeJS.Timeout | null = null;
   private useWebSocket = false;
+  private proxyAgent?: HttpsProxyAgent<string>;
 
   constructor(apiKey?: string, privateKey?: string) {
     super();
     this.apiKey = apiKey;
     this.privateKey = privateKey;
     this.useWebSocket = !!(apiKey && privateKey);
+
+    // Configure proxy if available
+    const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
+    if (proxyUrl) {
+      this.proxyAgent = new HttpsProxyAgent(proxyUrl);
+      logger.info('Kalshi client configured with proxy support');
+    }
 
     if (this.useWebSocket) {
       logger.info('Kalshi client initialized with WebSocket support (authenticated)');
@@ -117,9 +126,15 @@ export class KalshiClient extends EventEmitter {
         logger.info('Connecting to Kalshi WebSocket...', {
           wsUrl: this.wsUrl,
           apiKey: this.apiKey.substring(0, 8) + '...',
+          usingProxy: !!this.proxyAgent,
         });
 
-        this.ws = new WebSocket(this.wsUrl, { headers });
+        const wsOptions: any = { headers };
+        if (this.proxyAgent) {
+          wsOptions.agent = this.proxyAgent;
+        }
+
+        this.ws = new WebSocket(this.wsUrl, wsOptions);
 
         this.ws.on('open', () => {
           logger.info('Kalshi WebSocket connection established');

@@ -4,6 +4,7 @@ import WebSocket from 'ws';
 import { logger } from '../utils/logger';
 import { Market, OrderBook, OrderBookLevel } from '../types';
 import { EventEmitter } from 'events';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 
 export interface PolymarketConfig {
   apiKey?: string;
@@ -22,11 +23,19 @@ export class PolymarketClient extends EventEmitter {
   private reconnectDelay = 1000;
   private subscribedMarkets: Set<string> = new Set();
   private pingInterval: NodeJS.Timeout | null = null;
+  private proxyAgent?: HttpsProxyAgent<string>;
 
   constructor(config: PolymarketConfig) {
     super();
 
     this.wallet = new ethers.Wallet(config.privateKey);
+
+    // Configure proxy if available
+    const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
+    if (proxyUrl) {
+      this.proxyAgent = new HttpsProxyAgent(proxyUrl);
+      logger.info('Polymarket client configured with proxy support');
+    }
 
     // Skip CLOB client initialization for now - focus on WebSocket
     // Will add proper API integration later
@@ -53,7 +62,17 @@ export class PolymarketClient extends EventEmitter {
     return new Promise((resolve, reject) => {
       const wsUrl = 'wss://ws-subscriptions-clob.polymarket.com/ws/market';
 
-      this.ws = new WebSocket(wsUrl);
+      logger.info('Connecting to Polymarket WebSocket...', {
+        wsUrl,
+        usingProxy: !!this.proxyAgent,
+      });
+
+      const wsOptions: any = {};
+      if (this.proxyAgent) {
+        wsOptions.agent = this.proxyAgent;
+      }
+
+      this.ws = new WebSocket(wsUrl, wsOptions);
 
       this.ws.on('open', () => {
         logger.info('WebSocket connection established');
@@ -95,17 +114,31 @@ export class PolymarketClient extends EventEmitter {
       });
 
       this.ws.on('error', (error) => {
-        logger.error('WebSocket error', { error });
+        logger.error('Polymarket WebSocket error', {
+          error,
+          message: error.message,
+          stack: error.stack,
+          code: (error as any).code,
+          errno: (error as any).errno,
+          syscall: (error as any).syscall,
+        });
         reject(error);
       });
 
       this.ws.on('close', (code, reason) => {
-        logger.warn('WebSocket connection closed', {
+        logger.warn('Polymarket WebSocket connection closed', {
           code,
-          reason: reason.toString(),
+          reason: reason.toString() || 'No reason provided',
           subscribedMarkets: this.subscribedMarkets.size
         });
-        this.handleWebSocketClose();
+
+        if (code !== 1000) {
+          // Not normal closure
+          this.handleWebSocketClose();
+          if (!this.ws || this.ws.readyState === WebSocket.CLOSED) {
+            reject(new Error(`WebSocket closed with code ${code}: ${reason.toString() || 'No reason'}`));
+          }
+        }
       });
 
       // Timeout for connection

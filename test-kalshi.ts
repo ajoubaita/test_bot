@@ -3,8 +3,17 @@ import * as fs from 'fs';
 import * as dotenv from 'dotenv';
 import WebSocket from 'ws';
 import axios from 'axios';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 
 dotenv.config();
+
+// Configure proxy if available
+const proxyUrl = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
+const proxyAgent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
+
+if (proxyAgent) {
+  console.log('Using proxy:', proxyUrl.split('@')[1] || 'configured');
+}
 
 // Load credentials
 const apiKey = process.env.KALSHI_API_KEY;
@@ -16,12 +25,28 @@ console.log('API Key:', apiKey?.substring(0, 8) + '...');
 console.log('Private Key loaded:', privateKey?.length, 'characters');
 console.log('Private Key preview:', privateKey?.substring(0, 50) + '...\n');
 
-// Test signature generation
+// Test signature generation using RSA-PSS (required by Kalshi)
 function generateSignature(timestamp: string, method: string, path: string): string {
-  const message = timestamp + method + path;
-  const hmac = crypto.createHmac('sha256', privateKey);
-  hmac.update(message);
-  return hmac.digest('base64');
+  try {
+    const message = timestamp + method + path;
+
+    // Sign using RSA-PSS (NOT HMAC - Kalshi uses asymmetric signing)
+    const sign = crypto.createSign('SHA256');
+    sign.update(message);
+    sign.end();
+
+    // Use RSA-PSS padding
+    const signature = sign.sign({
+      key: privateKey,
+      padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+      saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST,
+    });
+
+    return signature.toString('base64');
+  } catch (error: any) {
+    console.error('Error generating RSA-PSS signature:', error.message);
+    throw error;
+  }
 }
 
 // Test 1: REST API authentication
@@ -46,6 +71,7 @@ async function testRestAPI() {
         'KALSHI-ACCESS-TIMESTAMP': timestamp,
       },
       params: { limit: 5 },
+      httpsAgent: proxyAgent,
     });
 
     console.log('✅ REST API SUCCESS');
@@ -75,13 +101,19 @@ async function testWebSocket() {
     console.log('Timestamp:', timestamp);
     console.log('Signature:', signature.substring(0, 20) + '...');
 
-    const ws = new WebSocket('wss://api.elections.kalshi.com/trade-api/ws/v2', {
+    const wsOptions: any = {
       headers: {
         'KALSHI-ACCESS-KEY': apiKey!,
         'KALSHI-ACCESS-SIGNATURE': signature,
         'KALSHI-ACCESS-TIMESTAMP': timestamp,
       },
-    });
+    };
+
+    if (proxyAgent) {
+      wsOptions.agent = proxyAgent;
+    }
+
+    const ws = new WebSocket('wss://api.elections.kalshi.com/trade-api/ws/v2', wsOptions);
 
     ws.on('open', () => {
       console.log('✅ WEBSOCKET CONNECTED');
